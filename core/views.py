@@ -64,6 +64,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from .models import AdminBorrow
 
+from django.core.serializers.json import DjangoJSONEncoder
+import traceback
 
 
 #FORGOT PASSWORD
@@ -1606,9 +1608,11 @@ class CreateReservationView(APIView):
     @transaction.atomic
     def post(self, request):
 
-        # -------- VALIDATION --------
+
         try:
             borrower = UserBorrower.objects.get(user=request.user)
+
+
 
             main_item_id = int(request.data.get("main_item_id"))
             main_item_qty = int(request.data.get("main_item_qty"))
@@ -1620,279 +1624,183 @@ class CreateReservationView(APIView):
             priority = request.data.get("priority", "Low")
             priority_detail = request.data.get("priority_detail", "")
             message = request.data.get("message", "")
-
             letter_img = request.FILES.get("letter_image")
             valid_id_img = request.FILES.get("valid_id_image")
-
             contact_number = request.data.get("contact", borrower.contact_number)
 
-        except Exception as e:
-            return Response({"detail": "Invalid payload", "error": str(e)}, status=400)
+         
 
-        if start_date > end_date:
-            return Response({"detail": "Invalid date range"}, status=400)
+            if start_date > end_date:
+                return Response({"detail": "Invalid date range"}, status=400)
 
-        # -------- BAD BORROWER CHECK --------
-        is_bad = borrower.borrower_status == "Bad" or borrower.late_count >= 3
-        if is_bad and priority == "Low":
-            return Response({
-                "detail": "You have 3 or more violations. Please visit the GSO office to clear your status.",
-            }, status=403)
+            # BAD BORROWER
+            is_bad = borrower.borrower_status == "Bad" or borrower.late_count >= 3
+            if is_bad and priority == "Low":
+                
+                return Response({
+                    "detail": "You have 3 or more violations. Please clear your status at the GSO office."
+                }, status=403)
 
-        # -------- HELPER: PRIORITY SCORE --------
-        def get_priority_score(pri, detail, is_bad_b):
-            detail = (detail or "").strip().lower()
+            # PRIORITY SCORE
+            def get_priority_score(pri, detail):
+                detail = (detail or "").strip().lower()
+                if pri == "High" and detail == "funeral":
+                    return 1
+                if pri == "High" and "government" in detail:
+                    return 2
+                if pri == "Low" and not is_bad:
+                    return 3
+                if pri == "Low" and is_bad:
+                    return 4
+                return 10
 
-            if pri == "High" and detail in ["funeral"]:
-                return 1
+            priority_score = get_priority_score(priority, priority_detail)
+            
 
-            if pri == "High" and detail in ["government activity", "government activities"]:
-                return 2
+            # TEMP RESERVATION
+            
+            reservation = Reservation.objects.create(
+                userborrower=borrower,
+                date_borrowed=start_date,
+                date_return=end_date,
+                priority=priority,
+                priority_detail=priority_detail,
+                message=message,
+                status="pending",
+                letter_image=letter_img,
+                valid_id_image=valid_id_img,
+                contact=contact_number,
+                temp_main_item=main_item_id
+            )
 
-            if pri == "Low" and not is_bad_b:
-                return 3
+            # Date suggestion
+            def suggest_new_ranges(item, required_qty):
+                
+                suggestions = []
+                days_needed = (end_date - start_date).days + 1
+                check_date = end_date + timedelta(days=1)
 
-            if pri == "Low" and is_bad_b:
-                return 4
+                while len(suggestions) < 3:
+                    new_start = check_date
+                    new_end = new_start + timedelta(days=days_needed - 1)
 
-            return 10
-        new_score = get_priority_score(priority, priority_detail, is_bad)
-        print(">>>> NEW SCORE:", new_score)   # optional debug
-
-        # -------- CREATE RESERVATION (PENDING FOR NOW) --------
-        reservation = Reservation.objects.create(
-            userborrower=borrower,
-            date_borrowed=start_date,
-            date_return=end_date,
-            priority=priority,
-            priority_detail=priority_detail,
-            message=message,
-            status="pending",
-            letter_image=letter_img,
-            valid_id_image=valid_id_img,
-            contact=contact_number,
-        )
-
-        # -------- SUGGEST DATES FUNCTION --------
-        def suggest_new_ranges(item, days_needed):
-            suggestions = []
-            check_date = end_date + timedelta(days=1)
-
-            while len(suggestions) < 3:
-                new_start = check_date
-                new_end = new_start + timedelta(days=days_needed - 1)
-
-                overlap = ReservationItem.objects.filter(
-                    item=item,
-                    reservation__status__in=["pending", "approved", "in use"],
-                    reservation__date_borrowed__lte=new_end,
-                    reservation__date_return__gte=new_start,
-                ).aggregate(total=Sum("quantity"))
-
-                reserved = overlap["total"] or 0
-                available = item.qty - reserved
-
-                if available > 0:
-                    suggestions.append({
-                        "start": new_start.isoformat(),
-                        "end": new_end.isoformat()
-                    })
-
-                check_date += timedelta(days=1)
-
-            return suggestions
-
-        # -------- VALIDATE AND PRIORITY-CONFLICT RESOLUTION --------
-        def validate_and_add(item_id, qty, new_score):
-            item = Item.objects.select_for_update().get(item_id=item_id)
-
-            # All reservations that overlap with the same item and date.
-            overlaps = ReservationItem.objects.filter(
-                item=item,
-                reservation__status__in=["pending", "approved", "in use"],
-                reservation__date_borrowed__lte=end_date,
-                reservation__date_return__gte=start_date,
-            ).select_related("reservation")
-
-            used = 0
-            lower_priority_reservations = []
-
-            print("\n==========================")
-            print(f"CHECKING ITEM: {item.name}")
-            print(f"REQUESTED QTY: {qty}")
-            print("==========================\n")
-
-            # Evaluate each overlapping reservation
-            for ri in overlaps:
-                r = ri.reservation
-                r_is_bad = (r.userborrower.borrower_status == "Bad" or r.userborrower.late_count >= 3)
-
-                r_score = get_priority_score(
-                    r.priority,
-                    r.priority_detail,
-                    r_is_bad
-                )
-
-                used += ri.quantity
-
-                print("---- EXISTING RESERVATION ----")
-                print("Transaction:", r.transaction_id)
-                print("Priority:", r.priority)
-                print("Detail:", r.priority_detail)
-                print("Score:", r_score)
-                print("Quantity Used:", ri.quantity)
-                print("--------------------------------")
-
-                # Lower priority = higher score number
-                if r_score > new_score:
-                    lower_priority_reservations.append((r, r_score))
-
-            available = item.qty - used
-
-            print("\n>>> SUMMARY BEFORE DECISION <<<")
-            print("Total item qty:", item.qty)
-            print("Used:", used)
-            print("Available:", available)
-            print("New score:", new_score)
-            print("Lower priority reservations:", [x[0].transaction_id for x in lower_priority_reservations])
-            print("=================================\n")
-
-            # CASE 1 — enough quantity → accept directly
-            if available >= qty:
-                print("✔ Case 1: Enough quantity. No override needed.")
-                ReservationItem.objects.create(
-                    reservation=reservation,
-                    item=item,
-                    item_name=item.name,
-                    quantity=qty
-                )
-                return {"suggest": False}
-
-            # CASE 2 — high priority override
-            # new_score must be STRICTLY LOWER (higher priority)
-            if new_score < min([s for _, s in lower_priority_reservations], default=999):
-
-                print("✔ Case 2: HIGH PRIORITY OVERRIDE ACTIVATED")
-
-                needed = qty - available
-
-                for r, r_score in sorted(lower_priority_reservations, key=lambda x: x[1], reverse=True):
-
-                    print(f"💥 Removing lower priority reservation: {r.transaction_id}")
-
-                    # Delete only THIS ITEM (not entire reservation items)
-                    ri = ReservationItem.objects.get(reservation=r, item=item)
-                    ri.delete()
-
-                    # Delete entire reservation only if no remaining items
-                    if not r.items.exists():
-                        r.delete()
-
-                    # RECALCULATE AVAILABLE CORRECTLY
-                    updated_used = ReservationItem.objects.filter(
+                    overlap = ReservationItem.objects.filter(
                         item=item,
                         reservation__status__in=["pending", "approved", "in use"],
-                        reservation__date_borrowed__lte=end_date,
-                        reservation__date_return__gte=start_date,
-                    ).aggregate(total=Sum("quantity"))["total"] or 0
+                        reservation__date_borrowed__lte=new_end,
+                        reservation__date_return__gte=new_start,
+                    )
 
-                    available = item.qty - updated_used
-                    needed = qty - available
+                    reserved = overlap.aggregate(total=Sum("quantity"))["total"] or 0
+                    available = item.qty - reserved
 
-                    if available >= qty:
-                        break
+                    if available >= required_qty:
+                        suggestions.append({
+                            "start": new_start.isoformat(),
+                            "end": new_end.isoformat()
+                        })
 
+                    check_date += timedelta(days=1)
 
-                # STILL NOT ENOUGH? Suggest alternative dates
-                if available < qty:
-                    print("❌ Even after override, not enough. Suggesting dates.")
-                    duration = (end_date - start_date).days + 1
-                    return {
-                        "suggest": True,
-                        "ranges": suggest_new_ranges(item, duration)
-                    }
+                print("📌 Suggested ranges:", suggestions)
+                return suggestions
 
-                # Otherwise success
-                print("✔ Override successful. Enough quantity now.")
+            # VALIDATION
+            def check_item(item_id, qty):
+                
+                item = Item.objects.select_for_update().get(item_id=item_id)
+
+                overlaps = ReservationItem.objects.filter(
+                    item=item,
+                    reservation__status__in=["pending", "approved", "in use"],
+                    reservation__date_borrowed__lte=end_date,
+                    reservation__date_return__gte=start_date,
+                )
+
+                used = overlaps.aggregate(total=Sum("quantity"))["total"] or 0
+                available = item.qty - used
+
+                print(f"   → Stock: {item.qty}, Used: {used}, Available: {available}")
+
+                if available >= qty:
+                    
+                    return {"ok": True}
+
+               
+                return {
+                    "ok": False,
+                    "message": "This item is fully reserved during your selected dates.",
+                    "ranges": suggest_new_ranges(item, qty)
+                }
+
+            # Validate all
+            all_items = [(main_item_id, main_item_qty)] + [
+                (int(it["id"]), int(it["qty"])) for it in added_items
+            ]
+
+            failed = None
+
+            for item_id, qty in all_items:
+                result = check_item(item_id, qty)
+                if not result["ok"]:
+                    failed = result
+                    break
+
+            # FAIL → 409 JSON
+            if failed:
+                
+                debug_json = {
+                    "detail": failed["message"],
+                    "suggest_next": True,
+                    "suggested_ranges": failed["ranges"],
+                    "unavailable_items": [{"name": "Item", "available": False}]
+                }
+                
+
+                return Response(
+                    json.loads(json.dumps(debug_json, cls=DjangoJSONEncoder)),
+                    status=409
+                )
+
+            # SUCCESS — save items
+            
+            for item_id, qty in all_items:
+                item = Item.objects.get(item_id=item_id)
                 ReservationItem.objects.create(
                     reservation=reservation,
                     item=item,
                     item_name=item.name,
                     quantity=qty
                 )
-                return {"suggest": False}
 
-            # CASE 3 — low priority cannot override → suggest dates
-            print("❌ Case 3: Low priority cannot override. Suggesting dates.")
-            duration = (end_date - start_date).days + 1
-            return {
-                "suggest": True,
-                "ranges": suggest_new_ranges(item, duration)
-            }
+            reservation.status = "pending"
+            reservation.save()
 
-
-        # -------- MAIN ITEM --------
-        result = validate_and_add(main_item_id, main_item_qty, new_score)
-
-        if result.get("suggest"):
-            reservation.delete()
-            return Response({
-                "detail": "Item not available",
-                "suggest_next": True,
-                "suggested_ranges": result["ranges"]
-            }, status=409)
-
-        # -------- ADDED ITEMS --------
-        for it in added_items:
-            result = validate_and_add(int(it["id"]), int(it["qty"]), new_score)
-            if result.get("suggest"):
-                reservation.delete()
-                return Response({
-                    "detail": "Item not available",
-                    "suggest_next": True,
-                    "suggested_ranges": result["ranges"]
-                }, status=409)
-
-        # -------- HIGH PRIORITY AUTO APPROVAL --------
-
-            if new_score in [1, 2]:
-                reservation.status = "approved"
-                reservation.save()
-
-                # Generate QR for approved high-priority reservation
-                qr_image = generate_qr(reservation.transaction_id)
-
-                Notification.objects.create(
-                    user=borrower,
-                    reservation=reservation,
-                    title="Reservation Approved",
-                    message=f"Your high-priority reservation ({reservation.transaction_id}) has been automatically approved.",
-                    qr_code=qr_image,
-                    type="approved",
-                    is_sent=True
-                )
-
-            else:
-                # LOW PRIORITY ONLY → pending
-                Notification.objects.create(
-                    user=borrower,
-                    reservation=reservation,
-                    title="Pending Reservation",
-                    message=f"Your reservation ({reservation.transaction_id}) is pending approval.",
-                    type="pending",
-                    is_sent=True
-                )
-
-
-            # -------- NOTIFICATION --------
+            
             Notification.objects.create(
                 user=borrower,
                 reservation=reservation,
                 title="Pending Reservation",
-                message=f"Your reservation ({reservation.transaction_id}) is pending approval.",
+                message=f"Your reservation ({reservation.transaction_id}) is pending admin approval.",
                 type="pending",
                 is_sent=True
             )
+
+            
+            return Response({
+                "success": True,
+                "reservation_id": reservation.id,
+                "transaction_id": reservation.transaction_id,
+                "auto_approved": False
+            }, status=201)
+
+        except Exception as e:
+            
+            print(traceback.format_exc())
+            return Response({"detail": "SERVER ERROR", "error": str(e)}, status=500)
+
+
+
 
 
 
