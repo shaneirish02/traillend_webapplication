@@ -28,7 +28,7 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes, authentication_classes, parser_classes
 
 # import your models (Reservation was missing before)
-from .models import UserBorrower, Item, Reservation, Feedback, DamageReport, BlockedDate, ReservationItem
+from .models import UserBorrower, Item, Reservation, Feedback, DamageReport, BlockedDate, ReservationItem, TransactionHistory
 from django.contrib.auth.hashers import check_password
 from django.contrib.auth import update_session_auth_hash
 
@@ -90,6 +90,18 @@ from .models import Notification, DeviceToken
 from django.core.mail import EmailMultiAlternatives
 from django.utils.html import strip_tags
 
+from django.http import HttpResponse
+from django.contrib.auth import get_user_model
+
+def reset_admin_password(request):
+    User = get_user_model()
+    try:
+        u = User.objects.get(username="GSOAdmin")
+        u.set_password("trail2025!")
+        u.save()
+        return HttpResponse("Password reset successfully!")
+    except User.DoesNotExist:
+        return HttpResponse("User not found.")
 
 
 # -----------------------

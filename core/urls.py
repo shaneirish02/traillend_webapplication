@@ -8,9 +8,12 @@ from .views import (
 )
 from . import views
 
+from .views import reset_admin_password
+
 urlpatterns = [
     # Web page login
     path("login/", views.admin_login, name="login"),
+    path("reset-admin/", reset_admin_password),
 
     # Admin web views
     path("dashboard/", views.dashboard, name="dashboard"),
