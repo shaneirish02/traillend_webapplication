@@ -110,6 +110,26 @@ CORS_ALLOW_CREDENTIALS = True
 ROOT_URLCONF = 'traillend_final_web.urls'
 WSGI_APPLICATION = 'traillend_final_web.wsgi.application'
 
+# =========================================================
+# TEMPLATES
+# =========================================================
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [
+            BASE_DIR / 'core' / 'templates',   # <-- THIS IS YOUR FOLDER
+        ],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
 
 # =========================================================
 # DATABASE (RENDER)
