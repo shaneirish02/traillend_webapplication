@@ -2,12 +2,36 @@ services:
   - type: web
     name: traillend-backend
     env: python
+
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn traillend_final_web.wsgi:application"
+
+    postDeployCommand: |
+      python manage.py migrate
+      python manage.py createsuperuser --noinput || true
+
     envVars:
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL
         sync: false
       - key: FIREBASE_KEY_JSON
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: admin
+      - key: DJANGO_SUPERUSER_PASSWORD
+        value: admin123
+      - key: DJANGO_SUPERUSER_EMAIL
+        value: admin@example.com
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
         sync: false
