@@ -46,10 +46,6 @@ from django.core.files.base import ContentFile
 from firebase_admin import messaging
 from .models import DeviceToken, Notification
 from .models import Notification
-from .scheduler import run_scheduled_notifications
-
-
-
 
 #stats
 from django.db.models import Count
@@ -275,6 +271,12 @@ def verify_reset_code(request):
 
     return render(request, "verify_reset_code.html", {"email": email})
 
+def generate_qr(transaction_id):
+    qr_data = f"Reservation: {transaction_id}"
+    qr_img = qrcode.make(qr_data)
+    buffer = BytesIO()
+    qr_img.save(buffer, format="PNG")
+    return ContentFile(buffer.getvalue(), f"qr_{transaction_id}.png")
 
 def inventory(request):
     items = Item.objects.all()
@@ -339,13 +341,6 @@ def inventory_createitem(request):
 
     return render(request, "inventory_createitem.html")
 
-@csrf_exempt
-def run_scheduler_api(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "POST only"}, status=405)
-
-    sent = run_scheduled_notifications()
-    return JsonResponse({"sent": sent})
 
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
@@ -1276,7 +1271,7 @@ def reservation_update_api(request, pk: int):
     new_status = request.data.get('status')
     reason_text = request.data.get('reason', '').strip()
 
-    allowed = {'approved', 'declined', 'borrowed', 'returned', 'pending'}
+    allowed = {'approved', 'rejected', 'borrowed', 'returned', 'pending'}
     if new_status not in allowed:
         return Response({'status': 'error', 'message': 'Invalid status'}, status=400)
 
@@ -1408,7 +1403,7 @@ def reservation_update_api(request, pk: int):
         )
         notif.qr_code.save(f"qr_{r.transaction_id}.png", qr_file)
 
-    elif new_status == "declined":
+    elif new_status == "rejected":
         Notification.objects.create(
             user=r.userborrower,
             reservation=r,
@@ -1420,8 +1415,6 @@ def reservation_update_api(request, pk: int):
         )
 
     return Response({"status": "success"})
-
-
 
 
 
@@ -1900,6 +1893,8 @@ class CreateReservationView(APIView):
                 type="pending",
                 is_sent=True
             )
+
+
 
 
 @csrf_exempt
@@ -3955,10 +3950,3 @@ def schedule_smart_alerts(reservation):
         type="warning_claim_delay",
         scheduled_at=one_hour_later,
     )
-
-def generate_qr(transaction_id):
-    qr_data = f"Reservation: {transaction_id}"
-    qr_img = qrcode.make(qr_data)
-    buffer = BytesIO()
-    qr_img.save(buffer, format="PNG")
-    return ContentFile(buffer.getvalue(), f"qr_{transaction_id}.png")

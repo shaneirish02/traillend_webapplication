@@ -3,27 +3,6 @@ from django.contrib.auth.models import User
 from django.db.models import Max
 from django.db import transaction
 
-def generate_global_transaction_id():
-    last_res = Reservation.objects.aggregate(m=Max("transaction_id"))["m"]
-    last_ab = AdminBorrow.objects.aggregate(m=Max("transaction_id"))["m"]
-
-    candidates = []
-
-    if last_res and last_res.startswith("T"):
-        try:
-            candidates.append(int(last_res[1:]))
-        except:
-            pass
-
-    if last_ab and last_ab.startswith("T"):
-        try:
-            candidates.append(int(last_ab[1:]))
-        except:
-            pass
-
-    last_num = max(candidates) if candidates else 0
-    return f"T{last_num + 1:06d}"
-
 
 class UserBorrower(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -66,7 +45,7 @@ class Reservation(models.Model):
         ('approved', 'Approved'),
         ('in use', 'In Use'),
         ('returned', 'Returned'),
-        ('declined', 'Declined'),
+        ('rejected', 'Rejected'),
         ('cancelled', 'Cancelled'),
     ]
 

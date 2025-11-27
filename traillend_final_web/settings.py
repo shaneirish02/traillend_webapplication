@@ -15,6 +15,7 @@ from pathlib import Path
 # 🔥 FIREBASE ADMIN CONFIG
 # ==============================
 import os
+import dj_database_url
 import firebase_admin
 from firebase_admin import credentials
 
@@ -40,9 +41,11 @@ SECRET_KEY = 'django-insecure-g%ec9@2x9!z^j=w$ssd4+n_3+o!hwg1op&-9^4@yo$s#i1)5n6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['10.147.69.115', 'localhost', '127.0.0.1', '10.147.69.115', '172.22.140.112', '10.180.1.217','192.168.43.118', '10.147.69.115']
-
-
+ALLOWED_HOSTS = [
+    os.environ.get("RENDER_EXTERNAL_HOSTNAME", ""),   
+    "127.0.0.1",
+    "10.147.69.115",
+]
 
 # Application definition
 
@@ -131,16 +134,12 @@ WSGI_APPLICATION = 'traillend_final_web.wsgi.application'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'traillend',
-        'USER': 'capstone',
-        'PASSWORD': 'okipuhaha',
-        'HOST': 'localhost',
-        'PORT': '5432',
-    }
+    'default': dj_database_url.config(
+        default=os.environ.get("DATABASE_URL"),
+        conn_max_age=600,
+        ssl_require=True
+    )
 }
-
 
 
 
@@ -182,6 +181,9 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     BASE_DIR / "static",  
 ]
+
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
 
 import os
 
