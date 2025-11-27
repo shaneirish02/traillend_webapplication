@@ -28,7 +28,7 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes, authentication_classes, parser_classes
 
 # import your models (Reservation was missing before)
-from .models import UserBorrower, Item, Reservation, Feedback, DamageReport, BlockedDate, ReservationItem, TransactionHistory
+from .models import UserBorrower, Item, Reservation, Feedback, DamageReport, BlockedDate, ReservationItem
 from django.contrib.auth.hashers import check_password
 from django.contrib.auth import update_session_auth_hash
 
