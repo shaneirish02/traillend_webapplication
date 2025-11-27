@@ -7,30 +7,44 @@ services:
     startCommand: "gunicorn traillend_final_web.wsgi:application"
 
     postDeployCommand: |
-      python manage.py migrate
+      python manage.py migrate --noinput
       python manage.py createsuperuser --noinput || true
 
     envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: traillend_final_web.settings
+
+      # SECURITY
       - key: SECRET_KEY
         sync: false
+      - key: DEBUG
+        value: False
+
+      # DATABASE
       - key: DATABASE_URL
         sync: false
+
+      # FIREBASE
       - key: FIREBASE_KEY_JSON
         sync: false
-      - key: CLOUDINARY_URL
-        sync: false
+
+      # CLOUDINARY
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+
+      # SUPERUSER (Your REAL admin user)
       - key: DJANGO_SUPERUSER_USERNAME
-        value: admin
+        value: GSOAdmin
       - key: DJANGO_SUPERUSER_PASSWORD
-        value: admin123
+        value: Trail2025!
       - key: DJANGO_SUPERUSER_EMAIL
-        value: admin@example.com
+        value: traillendgso@gmail.com
+
+      # EMAIL
       - key: EMAIL_USER
         sync: false
       - key: EMAIL_PASS
