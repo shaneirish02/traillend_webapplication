@@ -15,7 +15,6 @@ def initialize_firebase():
         firebase_admin.initialize_app(cred)
         print("🔥 Firebase initialized from ENV")
     else:
-        # local fallback
         cred_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "firebase_key.json"
