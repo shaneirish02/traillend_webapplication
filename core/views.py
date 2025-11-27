@@ -977,7 +977,7 @@ def api_register(request):
               <table align="center" style="max-width:600px; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
                 <tr>
                   <td style="background-color:#1976D2; text-align:center; padding:30px;">
-                    <img src="https://i.postimg.cc/Dw8pYLL5/traillend_icon.png" alt="TrailLend Logo" width="80" />
+                    <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" />
                     <h1 style="color:#fff; margin:10px 0 0;">TrailLend</h1>
                     <p style="color:#cce6ff;">Empowering the Community Together 🌿</p>
                   </td>
@@ -1102,7 +1102,7 @@ def verify_email(request, uidb64, token):
             </head>
             <body>
               <div class="card">
-                <img src="https://i.postimg.cc/Dw8pYLL5/traillend_icon.png" width="90" />
+                <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" width="90" />
                 <h1 style="color:#1976D2;">Email Verified!</h1>
                 <p style="color:#333;">Your TrailLend account has been successfully verified.</p>
                 <p style="color:#555;">You can now log in to your account.</p>
@@ -3084,7 +3084,7 @@ def forgot_password(request):
                                 box-shadow:0 4px 10px rgba(0,0,0,0.05); margin-top:40px;">
                     <tr>
                       <td style="background-color:#1976D2; text-align:center; padding:30px;">
-                        <img src="https://i.ibb.co/T2Hyfdd/traillend_icon.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
+                        <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
                         <h1 style="color:#fff; font-size:22px; margin:0;">TrailLend</h1>
                         <p style="color:#cce6ff; font-size:13px; margin:4px 0 0;">Empowering the Community Together 🌿</p>
                       </td>
@@ -3168,7 +3168,7 @@ def forgot_password(request):
                 <body style="font-family:'Poppins',Arial,sans-serif; background-color:#f4f6f9; padding:30px;">
                   <table align="center" style="max-width:600px; background:#fff; border-radius:10px; padding:30px;">
                     <tr><td style="text-align:center;">
-                      <img src="https://i.ibb.co/T2Hyfdd/traillend_icon.png" width="70" alt="TrailLend" />
+                      <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" width="70" alt="TrailLend" />
                       <h2 style="color:#1976D2;">TrailLend Password Reset (Resent)</h2>
                       <p style="color:#333;">Here is your new reset code:</p>
                       <div style="margin:20px 0;">
@@ -3251,7 +3251,7 @@ def verify_reset_code(request):
                                 box-shadow:0 4px 10px rgba(0,0,0,0.05); margin-top:40px;">
                     <tr>
                       <td style="background-color:#1976D2; text-align:center; padding:30px;">
-                        <img src="https://i.ibb.co/T2Hyfdd/traillend_icon.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
+                        <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
                         <h1 style="color:#fff; font-size:22px; margin:0;">TrailLend</h1>
                         <p style="color:#cce6ff; font-size:13px; margin:4px 0 0;">Empowering the Community Together 🌿</p>
                       </td>
