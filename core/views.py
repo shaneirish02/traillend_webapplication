@@ -97,7 +97,7 @@ def reset_admin_password(request):
     User = get_user_model()
     try:
         u = User.objects.get(username="GSOAdmin")
-        u.set_password("Trail2025!")
+        u.set_password("Trailend2025!")
         u.save()
         return HttpResponse("Password reset successfully!")
     except User.DoesNotExist:
