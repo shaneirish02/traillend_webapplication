@@ -2,18 +2,31 @@ from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from django.core.management import call_command
+from django.http import HttpResponse
+
 from .views import (
     CheckAvailabilityView, CreateReservationView,
-    forgot_password, verify_reset_code, # ✅ make sure these are imported
+    forgot_password, verify_reset_code, reset_admin_password
 )
 from . import views
 
-from .views import reset_admin_password
+
+# --------------------------
+# TEMPORARY MIGRATION URL
+# --------------------------
+def run_migrations(request):
+    call_command("migrate")
+    return HttpResponse("Migrations executed!")
+
 
 urlpatterns = [
     # Web page login
     path("login/", views.admin_login, name="login"),
     path("reset-admin/", reset_admin_password),
+
+    # 👉 Add the migration runner here
+    path("run-migrations/", run_migrations),
 
     # Admin web views
     path("dashboard/", views.dashboard, name="dashboard"),
@@ -21,7 +34,6 @@ urlpatterns = [
     # Forgot password + reset code
     path("forgot_password/", views.forgot_password, name="forgot_password"),
     path("verify_reset_code/", views.verify_reset_code, name="verify_reset_code"),
-
 
     # Inventory & others
     path("inventory/", views.inventory, name="inventory"),
@@ -40,7 +52,6 @@ urlpatterns = [
     # API endpoints
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-
 
     path("api/register/", views.api_register),
     path("api/verify-email/<uidb64>/<token>/", views.verify_email, name="verify_email"),
@@ -66,17 +77,17 @@ urlpatterns = [
     path('api/notifications/delete/<int:pk>/', views.delete_notification, name='delete_notification'),
     path('api/notifications/trigger_due_reminders/', views.trigger_due_soon_notifications),
 
-    #NEW
+    # NEW
     path('api/user_reservations/', views.user_reservations, name='user_reservations'),
     path('api/reservations/<int:pk>/cancel/', views.cancel_reservation, name='cancel_reservation'),
 
-    #verification
+    # verification
     path("verify_qr/", views.verify_qr, name="verify_qr"),
     path('verify_qr/<str:mode>/<str:code>/', views.verify_qr, name='verify_qr'),
     path('update_reservation/<str:mode>/<str:code>/', views.update_reservation, name='update_reservation'),
 
     path('submit_feedback/', views.submit_feedback, name='submit_feedback'),
-    path('monthly_reset/', views.monthly_reset, name='monthly_reset'),  # optional
+    path('monthly_reset/', views.monthly_reset, name='monthly_reset'),
 
     path('damage_report/', views.damage_loss_report_list, name='damage_loss_report_list'),
     path("api/in-use-items/", views.get_in_use_items, name="get_in_use_items"),
@@ -90,30 +101,21 @@ urlpatterns = [
     path("statistics/export/pdf/", views.export_pdf, name="export_pdf"),
     path("statistics/export/docx/", views.export_docx, name="export_docx"),
 
-
     path("api/me_borrower/", views.me_borrower),
     path("api/late-history/", views.borrower_late_history, name="borrower_late_history"),
 
     path("api/item/<int:item_id>/admin-borrow/", views.create_admin_borrow, name="create_admin_borrow"),
     path("api/admin-borrow/<int:pk>/update/", views.update_admin_borrow, name="update_admin_borrow"),
     path("api/admin-borrow/<int:pk>/delete/", views.delete_admin_borrow, name="delete_admin_borrow"),
-    # ------------ ADMIN BORROW ------------
-    # Create new direct borrow
+
     path("api/item/<int:item_id>/admin-borrow/", views.create_admin_borrow),
-
-    # List direct borrows for a date
     path("api/item/<int:item_id>/admin-borrow/list/", views.admin_borrow_list),
-
-    # Mark direct borrow as returned
     path("api/admin-borrow/<int:pk>/return/", views.return_admin_borrow),
 
     path("api/suggest-items/", views.suggest_items, name="suggest-items"),
     path("damage-report/update-status/<int:report_id>/", views.update_report_status, name='update_report_status'),
     path("api/item/<int:item_id>/admin-borrow/", views.admin_borrow_create, name="admin_borrow_create"),
-
-
 ]
-
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
