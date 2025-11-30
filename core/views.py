@@ -989,6 +989,8 @@ def api_register(request):
     if request.method == "POST":
         try:
             data = json.loads(request.body or "{}")
+            print("REGISTER DATA RECEIVED:", data) 
+            
             username = data.get("username")
             password = data.get("password")
             confirm_password = data.get("confirmPassword")
