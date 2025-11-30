@@ -67,13 +67,13 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
 
-    'django.contrib.sessions.middleware.SessionMiddleware',
+    # CORS MUST BE AT THE TOP
     'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.common.CommonMiddleware',
 
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -99,11 +99,21 @@ SIMPLE_JWT = {
 }
 
 
-# =========================================================
-# CORS CONFIG
-# =========================================================
+CSRF_TRUSTED_ORIGINS = [
+    "https://traillend-system-qqo7.onrender.com",
+    "https://*.onrender.com"
+]
+
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+
+# Important
+CORS_ALLOW_HEADERS = [
+    "authorization",
+    "content-type",
+    "accept",
+    "origin",
+]
 
 
 # =========================================================
