@@ -198,6 +198,8 @@ EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_PASS", "")
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
+
+
 # =========================================================
 # INTERNATIONALIZATION
 # =========================================================
