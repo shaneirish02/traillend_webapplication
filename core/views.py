@@ -46,6 +46,8 @@ from django.core.files.base import ContentFile
 from firebase_admin import messaging
 from .models import DeviceToken, Notification
 from .models import Notification
+from .scheduler import run_scheduled_notifications
+
 
 #stats
 from django.db.models import Count
@@ -64,8 +66,9 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from .models import AdminBorrow
 
-from django.core.serializers.json import DjangoJSONEncoder
-import traceback
+
+from core.data.hardcoded_transactions import HARD_CODED_TRANSACTIONS
+from core.data.hardcoded_damage import HARD_CODED_DAMAGE_LOSS
 
 
 #FORGOT PASSWORD
@@ -102,6 +105,7 @@ def reset_admin_password(request):
         return HttpResponse("Password reset successfully!")
     except User.DoesNotExist:
         return HttpResponse("User not found.")
+
 
 
 # -----------------------
@@ -285,12 +289,6 @@ def verify_reset_code(request):
 
     return render(request, "verify_reset_code.html", {"email": email})
 
-def generate_qr(transaction_id):
-    qr_data = f"Reservation: {transaction_id}"
-    qr_img = qrcode.make(qr_data)
-    buffer = BytesIO()
-    qr_img.save(buffer, format="PNG")
-    return ContentFile(buffer.getvalue(), f"qr_{transaction_id}.png")
 
 def inventory(request):
     items = Item.objects.all()
@@ -355,6 +353,13 @@ def inventory_createitem(request):
 
     return render(request, "inventory_createitem.html")
 
+@csrf_exempt
+def run_scheduler_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+
+    sent = run_scheduled_notifications()
+    return JsonResponse({"sent": sent})
 
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
@@ -438,18 +443,13 @@ def transaction_log(request):
         transactions.append({
             "transaction_id": r.transaction_id,
             "user_name": borrower_name,
-
-            # LISTS for template
             "item_list": item_list,
             "qty_list": qty_list,
-
             "contact": contact,
             "created_at": r.created_at,
-
             "date_receive": fmt(r.date_receive),
             "date_returned": fmt(r.date_returned),
-
-            "delivered_by": "-",
+            "delivered_by": r.delivered_by,
             "status": r.status,
         })
 
@@ -462,23 +462,57 @@ def transaction_log(request):
         transactions.append({
             "transaction_id": ab.transaction_id,
             "user_name": ab.borrower_name,
-
-            # ADMIN HAS ONLY ONE ITEM → wrap in list
-            "item_list": [ab.item.name],
+            "item_list": [ab.item.name],  # ADMIN = single item
             "qty_list": [ab.quantity],
-
             "contact": ab.contact_number,
             "created_at": ab.created_at,
-
             "date_receive": fmt(ab.date),
             "date_returned": fmt(ab.return_date if ab.status == "Returned" else None),
-
             "delivered_by": ab.delivered_by,
             "status": ab.status,
         })
 
     # ===============================
-    # 3. SORT ALL TRANSACTIONS
+    # 3. HARD-CODED OLD DATA
+    # ===============================
+    for h in HARD_CODED_TRANSACTIONS:
+
+        # 1) CREATED AT (always datetime)
+        created_dt = timezone.make_aware(
+            datetime.strptime(h["created_at"], "%Y-%m-%d %I:%M %p")
+        )
+
+        # 2) DATE_RECEIVE (old data = date only, new system = date+time)
+        if h["date_receive"] in ["—", None, ""]:
+            date_receive_dt = None
+            date_receive_display = "—"
+        else:
+            # OLD DATA (YYYY-MM-DD only)
+            if len(h["date_receive"]) == 10:
+                date_receive_dt = datetime.strptime(h["date_receive"], "%Y-%m-%d").date()
+                date_receive_display = h["date_receive"]
+            else:
+                # If ever you add time later
+                dr = datetime.strptime(h["date_receive"], "%Y-%m-%d %I:%M %p")
+                date_receive_dt = timezone.make_aware(dr)
+                date_receive_display = dr.strftime("%Y-%m-%d %I:%M %p")
+
+        transactions.append({
+            "transaction_id": h["transaction_id"],
+            "user_name": h["user_name"],
+            "item_list": h["item_list"],
+            "qty_list": h["qty_list"],
+            "contact": h["contact"],
+            "created_at": created_dt,
+            "date_receive": date_receive_dt,        # for filtering
+            "date_receive_display": date_receive_display,  # for template
+            "date_returned": None,
+            "delivered_by": h["delivered_by"],
+            "status": h["status"],
+        })
+
+    # ===============================
+    # 4. SORT ALL COMBINED TRANSACTIONS
     # ===============================
     transactions = sorted(
         transactions,
@@ -487,7 +521,6 @@ def transaction_log(request):
     )
 
     return render(request, "transaction_history.html", {"transactions": transactions})
-
 
 
 
@@ -504,16 +537,29 @@ def statistics(request):
     return render(request, "statistics.html", context)
 
 
+def to_date(d):
+    """Convert YYYY-MM-DD or '—' into real date() or None."""
+    if not d or d == "—":
+        return None
+    try:
+        return datetime.strptime(d, "%Y-%m-%d").date()
+    except:
+        return None
+
+
 def statistics_data(request):
 
-    # Filters from request
     start = request.GET.get("start")
     end = request.GET.get("end")
-    status_filter = request.GET.get("status", "all")
-    category_filter = request.GET.get("category", "all")
-    report_type_filter = request.GET.get("report_type", "all")
+    status_filter = request.GET.get("status", "all").lower()
+    category_filter = request.GET.get("category", "all").lower()
+    report_type_filter = request.GET.get("report_type", "all").lower()
 
-    # Base: get all reservations
+    results = []
+
+    # ====================================================================
+    # 1. USER RESERVATIONS
+    # ====================================================================
     reservations = (
         Reservation.objects
         .select_related("userborrower")
@@ -521,104 +567,272 @@ def statistics_data(request):
         .all()
     )
 
-    # Apply DATE filters (borrowed date)
-    if start:
-        reservations = reservations.filter(date_borrowed__gte=parse_date(start))
-    if end:
-        reservations = reservations.filter(date_borrowed__lte=parse_date(end))
-
-    # Apply STATUS filter
-    if status_filter != "all":
-        reservations = reservations.filter(status=status_filter)
-
-    results = []
-
-    # Build results
     for r in reservations:
 
-        # Determine report type (Damage / Loss / None)
-        report = r.damage_reports.first()
-        report_type = report.report_type.lower() if report else "none"
+        rep = r.damage_reports.first()
+        rep_type = rep.report_type.lower() if rep else "none"
 
-        # Filter by report type
-        if report_type_filter != "all":
-            if report_type_filter != report_type:
-                continue
-
-        # Loop through all items in reservation
         for ri in r.items.all():
 
-            # Category filter
-            if category_filter != "all" and ri.item.category != category_filter:
-                continue
+            # FIX: date or datetime handling
+            borrowed_date = (
+                r.date_borrowed if isinstance(r.date_borrowed, date)
+                else r.date_borrowed.date()
+            ) if r.date_borrowed else None
+
+            returned_date = (
+                r.date_return if (r.date_return and isinstance(r.date_return, date))
+                else (r.date_return.date() if r.date_return else None)
+            )
 
             results.append({
                 "item_name": ri.item.name,
-                "category": ri.item.category,
-                "borrower_name": r.userborrower.full_name if r.userborrower else "Unknown",
-                "borrowed_at": r.date_borrowed.strftime("%Y-%m-%d"),
-                "returned_at": r.date_return.strftime("%Y-%m-%d"),
-                "report_type": report_type.capitalize(),
-                "status": r.status,
+                "category": ri.item.category.lower() if ri.item.category else "unknown",
+                "borrower_name": r.userborrower.full_name,
+                "borrowed_at": borrowed_date,
+                "returned_at": returned_date,
+                "report_type": rep_type,
+                "status": r.status.lower(),
             })
 
-    return JsonResponse({"transactions": results})
+    # ====================================================================
+    # 2. ADMIN DIRECT BORROWS
+    # ====================================================================
+    admin_list = AdminBorrow.objects.select_related("item").all()
 
+    for ab in admin_list:
 
-@login_required
-def export_excel(request):
-    start_date = request.GET.get("start")
-    end_date = request.GET.get("end")
-    status_filter = request.GET.get("status")
-    category_filter = request.GET.get("category")
-    report_filter = request.GET.get("report_type")
+        borrowed_date = (
+            ab.created_at.date() if not isinstance(ab.created_at, date)
+            else ab.created_at
+        )
 
-    qs = (
+        returned_date = (
+            ab.return_date if isinstance(ab.return_date, date)
+            else ab.return_date.date()
+        ) if ab.return_date else None
+
+        results.append({
+            "item_name": ab.item.name,
+            "category": ab.item.category.lower() if ab.item.category else "unknown",
+            "borrower_name": ab.borrower_name,
+            "borrowed_at": borrowed_date,
+            "returned_at": returned_date,
+            "report_type": "none",
+            "status": ab.status.lower(),
+        })
+
+    # ====================================================================
+    # 3. HARD-CODED OLD TRANSACTIONS
+    # ====================================================================
+    for h in HARD_CODED_TRANSACTIONS:
+
+        results.append({
+            "item_name": ", ".join(h["item_list"]),
+            "category": "unknown",
+            "borrower_name": h["user_name"],
+            "borrowed_at": h["date_receive"],
+            "returned_at": h["date_returned"] if h["date_returned"] != "—" else None,
+            "report_type": "none",
+            "status": h["status"].lower(),
+        })
+
+    # ====================================================================
+    # 4. HARD-CODED DAMAGE & LOSS
+    # ====================================================================
+    for h in HARD_CODED_DAMAGE_LOSS:
+
+        results.append({
+            "item_name": h["item_name"],
+            "category": "unknown",
+            "borrower_name": h["user_name"],
+            "borrowed_at": h["date"],
+            "returned_at": None,
+            "report_type": h["type"].lower(),
+            "status": h["status"].lower(),
+        })
+
+    # ====================================================================
+    # APPLY FILTERS
+    # ====================================================================
+    filtered = []
+
+    for r in results:
+
+        # DATE filtering (convert everything to YYYY-MM-DD strings)
+        borrowed_str = str(r["borrowed_at"])
+
+        if start and borrowed_str < start:
+            continue
+        if end and borrowed_str > end:
+            continue
+
+        # Status
+        if status_filter != "all" and r["status"] != status_filter:
+            continue
+
+        # Category
+        if category_filter != "all" and r["category"] != category_filter:
+            continue
+
+        # Report type
+        if report_type_filter != "all" and r["report_type"] != report_type_filter:
+            continue
+
+        filtered.append(r)
+
+    return JsonResponse({"transactions": filtered})
+
+def get_all_transactions(start_date, end_date, status_filter, category_filter, report_type_filter):
+    results = []
+
+    # ================================================================
+    # 1. DATABASE RESERVATIONS
+    # ================================================================
+    reservations = (
         Reservation.objects
         .select_related("userborrower")
         .prefetch_related("items__item", "damage_reports")
         .all()
     )
 
-    # Filters
-    if start_date:
-        qs = qs.filter(date_borrowed__gte=parse_date(start_date))
-    if end_date:
-        qs = qs.filter(date_borrowed__lte=parse_date(end_date))
-    if status_filter and status_filter != "all":
-        qs = qs.filter(status__iexact=status_filter)
+    for r in reservations:
+        rep = r.damage_reports.first()
+        rep_type = rep.report_type.lower() if rep else "none"
 
-    data = []
-
-    for r in qs:
-        report = r.damage_reports.first()
-        report_type = report.report_type if report else "None"
+        borrowed_date = r.date_borrowed if isinstance(r.date_borrowed, date) else r.date_borrowed.date()
+        returned_date = r.date_return if r.date_return else None
 
         for ri in r.items.all():
 
-            # Category filter
-            if category_filter != "all" and ri.item.category != category_filter:
-                continue
+            # Normalize category (model OR string)
+            raw_cat = ri.item.category
+            if hasattr(raw_cat, "name"):
+                category = raw_cat.name.lower()
+            else:
+                category = str(raw_cat).lower() if raw_cat else "unknown"
 
-            # Damage/Loss filter
-            if report_filter == "damage" and report_type != "Damage":
-                continue
-            if report_filter == "loss" and report_type != "Loss":
-                continue
-
-            data.append({
-                "Item Name": ri.item.name,
-                "Category": ri.item.category,
-                "Borrower": r.userborrower.full_name,
-                "Borrowed At": r.date_borrowed.strftime("%Y-%m-%d"),
-                "Returned At": r.date_return.strftime("%Y-%m-%d") if r.date_return else "",
-                "Report Type": report_type,
-                "Status": r.status.capitalize(),
+            results.append({
+                "item_name": ri.item.name,
+                "category": category,
+                "borrower_name": r.userborrower.full_name if r.userborrower else "Unknown",
+                "borrowed_at": borrowed_date.strftime("%Y-%m-%d"),
+                "returned_at": returned_date.strftime("%Y-%m-%d") if returned_date else "—",
+                "report_type": rep_type,
+                "status": r.status.lower(),
             })
 
-    df = pd.DataFrame(data)
-    output = io.BytesIO()
+    # ================================================================
+    # 2. DATABASE: ADMIN DIRECT BORROW
+    # ================================================================
+    admin_list = AdminBorrow.objects.select_related("item").all()
 
+    for ab in admin_list:
+
+        raw_cat = ab.item.category
+        if hasattr(raw_cat, "name"):
+            category = raw_cat.name.lower()
+        else:
+            category = str(raw_cat).lower() if raw_cat else "unknown"
+
+        results.append({
+            "item_name": ab.item.name,
+            "category": category,
+            "borrower_name": ab.borrower_name,
+            "borrowed_at": ab.date.strftime("%Y-%m-%d"),
+            "returned_at": ab.return_date.strftime("%Y-%m-%d") if ab.return_date else "—",
+            "report_type": "none",
+            "status": ab.status.lower(),
+        })
+
+    # ================================================================
+    # 3. HARD-CODED OLD TRANSACTIONS
+    # ================================================================
+    for h in HARD_CODED_TRANSACTIONS:
+
+        # Hard-coded category is unknown
+        results.append({
+            "item_name": ", ".join(h["item_list"]),
+            "category": "unknown",
+            "borrower_name": h["user_name"],
+            "borrowed_at": h["date_receive"],  # already correct format
+            "returned_at": h["date_returned"] if h["date_returned"] != "—" else "—",
+            "report_type": "none",
+            "status": h["status"].lower(),
+        })
+
+    # ================================================================
+    # 4. HARD-CODED DAMAGE & LOSS
+    # ================================================================
+    for h in HARD_CODED_DAMAGE_LOSS:
+
+        raw_cat = h.get("category", "unknown")
+        category = str(raw_cat).lower() if raw_cat else "unknown"
+
+        results.append({
+            "item_name": h["item_name"],
+            "category": category,
+            "borrower_name": h["user_name"],
+            "borrowed_at": h["date"],
+            "returned_at": "—",
+            "report_type": h["type"].lower(),
+            "status": h["status"].lower(),
+        })
+
+    # ================================================================
+    # APPLY FILTERS
+    # ================================================================
+    filtered = []
+
+    for r in results:
+
+        # DATE FILTER
+        if start_date:
+            if r["borrowed_at"] < start_date:
+                continue
+        if end_date:
+            if r["borrowed_at"] > end_date:
+                continue
+
+        # STATUS FILTER
+        if status_filter != "all" and r["status"] != status_filter:
+            continue
+
+        # CATEGORY FILTER
+        if category_filter != "all" and r["category"] != category_filter:
+            continue
+
+        # REPORT TYPE FILTER
+        if report_type_filter != "all" and r["report_type"] != report_type_filter:
+            continue
+
+        filtered.append(r)
+
+    return filtered
+
+
+
+@login_required
+def export_excel(request):
+    start_date = request.GET.get("start", "")
+    end_date = request.GET.get("end", "")
+    status_filter = request.GET.get("status", "all").lower()
+    category_filter = request.GET.get("category", "all").lower()
+    report_filter = request.GET.get("report_type", "all").lower()
+
+    data = get_all_transactions(start_date, end_date, status_filter, category_filter, report_filter)
+
+    df = pd.DataFrame([{
+        "Item Name": d["item_name"],
+        "Category": d["category"],
+        "Borrower": d["borrower_name"],
+        "Borrowed At": d["borrowed_at"],
+        "Returned At": d["returned_at"],
+        "Report Type": d["report_type"].title(),
+        "Status": d["status"].title(),
+    } for d in data])
+
+    output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False, sheet_name="Report")
 
@@ -632,58 +846,20 @@ def export_excel(request):
 
 @login_required
 def export_pdf(request):
-    start_date = request.GET.get("start")
-    end_date = request.GET.get("end")
-    status_filter = request.GET.get("status")
-    category_filter = request.GET.get("category")
-    report_filter = request.GET.get("report_type")
+    start_date = request.GET.get("start", "")
+    end_date = request.GET.get("end", "")
+    status_filter = request.GET.get("status", "all").lower()
+    category_filter = request.GET.get("category", "all").lower()
+    report_filter = request.GET.get("report_type", "all").lower()
 
-    qs = (
-        Reservation.objects
-        .select_related("userborrower")
-        .prefetch_related("items__item", "damage_reports")
-        .all()
-    )
-
-    if start_date:
-        qs = qs.filter(date_borrowed__gte=parse_date(start_date))
-    if end_date:
-        qs = qs.filter(date_borrowed__lte=parse_date(end_date))
-    if status_filter and status_filter != "all":
-        qs = qs.filter(status__iexact=status_filter)
-
-    transactions = []
-
-    for r in qs:
-        report = r.damage_reports.first()
-        report_type = report.report_type if report else "None"
-
-        for ri in r.items.all():
-
-            if category_filter != "all" and ri.item.category != category_filter:
-                continue
-
-            if report_filter == "damage" and report_type != "Damage":
-                continue
-            if report_filter == "loss" and report_type != "Loss":
-                continue
-
-            transactions.append({
-                "item_name": ri.item.name,
-                "category": ri.item.category,
-                "borrower_name": r.userborrower.full_name,
-                "borrowed_at": r.date_borrowed.strftime("%Y-%m-%d"),
-                "returned_at": r.date_return.strftime("%Y-%m-%d") if r.date_return else "",
-                "report_type": report_type,
-                "status": r.status.capitalize(),
-            })
+    transactions = get_all_transactions(start_date, end_date, status_filter, category_filter, report_filter)
 
     logo_path = request.build_absolute_uri(static("barangay_logo.png"))
 
-    html = render_to_string(
-        "pdf_template.html",
-        {"transactions": transactions, "logo_path": logo_path}
-    )
+    html = render_to_string("pdf_template.html", {
+        "transactions": transactions,
+        "logo_path": logo_path
+    })
 
     response = HttpResponse(content_type="application/pdf")
     response["Content-Disposition"] = "attachment; filename=report.pdf"
@@ -691,13 +867,12 @@ def export_pdf(request):
     pisa.CreatePDF(html, dest=response)
     return response
 
+
 @login_required
 def export_docx(request):
-    import os
-    import io
+    import os, io
     from django.http import HttpResponse
     from django.conf import settings
-    from django.utils.dateparse import parse_date
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -706,158 +881,56 @@ def export_docx(request):
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
-    # -------------------------
-    # SHADING (HEADER BG COLOR)
-    # -------------------------
     def shade(cell, color="E8EEF3"):
-        """Safe shading setter."""
         tcPr = cell._tc.get_or_add_tcPr()
         shd = OxmlElement('w:shd')
         shd.set(qn('w:fill'), color)
         shd.set(qn('w:val'), 'clear')
         tcPr.append(shd)
 
-    # -------------------------
-    # FILTERS
-    # -------------------------
-    start_date = request.GET.get("start")
-    end_date = request.GET.get("end")
-    status_filter = request.GET.get("status")
-    category_filter = request.GET.get("category")
-    report_filter = request.GET.get("report_type")
+    start_date = request.GET.get("start", "")
+    end_date = request.GET.get("end", "")
+    status_filter = request.GET.get("status", "all").lower()
+    category_filter = request.GET.get("category", "all").lower()
+    report_filter = request.GET.get("report_type", "all").lower()
 
-    qs = (
-        Reservation.objects
-        .select_related("userborrower")
-        .prefetch_related("items__item", "damage_reports")
-        .all()
-    )
+    transactions = get_all_transactions(start_date, end_date, status_filter, category_filter, report_filter)
 
-    if start_date:
-        qs = qs.filter(date_borrowed__gte=parse_date(start_date))
-    if end_date:
-        qs = qs.filter(date_borrowed__lte=parse_date(end_date))
-    if status_filter and status_filter != "all":
-        qs = qs.filter(status__iexact=status_filter)
-
-    # -------------------------
-    # BUILD TRANSACTIONS
-    # -------------------------
-    transactions = []
-    for r in qs:
-        rep = r.damage_reports.first()
-        rep_type = rep.report_type if rep else "None"
-
-        for ri in r.items.all():
-
-            if category_filter != "all" and ri.item.category != category_filter:
-                continue
-
-            if report_filter == "damage" and rep_type != "Damage":
-                continue
-            if report_filter == "loss" and rep_type != "Loss":
-                continue
-
-            transactions.append({
-                "item_name": ri.item.name,
-                "category": ri.item.category,
-                "borrower_name": r.userborrower.full_name,
-                "borrowed_at": r.date_borrowed.strftime("%Y-%m-%d"),
-                "returned_at": r.date_return.strftime("%Y-%m-%d") if r.date_return else "",
-                "report_type": rep_type,
-                "status": r.status.capitalize(),
-            })
-
-    # -------------------------
-    # CREATE DOCX
-    # -------------------------
+    # DOCX GENERATION FOLLOWS (UNCHANGED EXCEPT DATA)
     doc = Document()
-
-    # PAGE SETUP LANDSCAPE
     section = doc.sections[0]
     section.orientation = WD_ORIENT.LANDSCAPE
     section.page_width = Inches(11)
     section.page_height = Inches(8.5)
-    section.left_margin = Inches(0.6)
-    section.right_margin = Inches(0.6)
-    section.top_margin = Inches(0.5)
-    section.bottom_margin = Inches(0.5)
 
-    # -------------------------
-    # HEADER TABLE (LOGO + CENTER TEXT)
-    # -------------------------
     header = doc.add_table(rows=1, cols=3)
-    header.alignment = WD_TABLE_ALIGNMENT.CENTER
     hdr_cells = header.rows[0].cells
 
-    # LEFT LOGO
-    left = hdr_cells[0]
-    left_par = left.paragraphs[0]
-    left_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    left = hdr_cells[0].paragraphs[0]
+    left.alignment = WD_ALIGN_PARAGRAPH.CENTER
     try:
-        logo_path = os.path.join(settings.BASE_DIR, "core", "static", "barangay_logo.png")
-        run = left_par.add_run()
-        run.add_picture(logo_path, width=Inches(1.2))
+        run = left.add_run()
+        run.add_picture(os.path.join(settings.BASE_DIR, "core", "static", "barangay_logo.png"), width=Inches(1.2))
     except:
-        left_par.add_run("")
+        pass
 
-    # CENTER TEXT
-    center = hdr_cells[1]
-    c = center.paragraphs[0]
-    c.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    texts = [
-        ("REPUBLIC OF THE PHILIPPINES", True),
-        ("City of Cagayan de Oro", False),
-        ("BARANGAY KAUSWAGAN", False),
-        ("OFFICE OF THE PUNONG BARANGAY", True),
-        ("FACILITIES AND PROPERTIES", True)
-    ]
+    center = hdr_cells[1].paragraphs[0]
+    center.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    center.add_run("Item Activity Report\n").bold = True
 
-    for text, bold in texts:
-        r = c.add_run(text + "\n")
-        r.bold = bold
-        r.font.size = Pt(12)
-        if "FACILITIES" in text:
-            r.font.size = Pt(14)
-            r.font.color.rgb = RGBColor(0, 51, 102)
+    doc.add_paragraph()
 
-    # RIGHT CELL (EMPTY — same as PDF)
-    hdr_cells[2].text = ""
-
-    doc.add_paragraph("")  # spacing
-    doc.add_paragraph("").alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # TITLE
-    title = doc.add_paragraph("Item Activity Report")
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.runs[0].bold = True
-    title.runs[0].font.size = Pt(14)
-
-    doc.add_paragraph("")
-
-    # -------------------------
-    # TABLE SETUP (SAME AS PDF)
-    # -------------------------
     table = doc.add_table(rows=1, cols=7)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
+    hdr = table.rows[0].cells
     headers = [
         "Item Name", "Category", "Borrower",
-        "Borrowed At", "Returned At",
-        "Report Type", "Status"
+        "Borrowed At", "Returned At", "Report Type", "Status"
     ]
-
-    hdr = table.rows[0].cells
     for i, text in enumerate(headers):
         hdr[i].text = text
         shade(hdr[i])
-        p = hdr[i].paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.runs[0].bold = True
+        hdr[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # -------------------------
-    # TABLE ROWS
-    # -------------------------
     for t in transactions:
         row = table.add_row().cells
         row[0].text = t["item_name"]
@@ -865,23 +938,15 @@ def export_docx(request):
         row[2].text = t["borrower_name"]
         row[3].text = t["borrowed_at"]
         row[4].text = t["returned_at"]
-        row[5].text = t["report_type"]
-        row[6].text = t["status"]
+        row[5].text = t["report_type"].title()
+        row[6].text = t["status"].title()
 
-        for cell in row:
-            for p in cell.paragraphs:
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-
-    # -------------------------
-    # EXPORT DOCX FILE
-    # -------------------------
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
 
     response = HttpResponse(
-        buffer.getvalue(),
+        buf.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
     response["Content-Disposition"] = "attachment; filename=report.docx"
@@ -973,7 +1038,7 @@ def api_register(request):
 
 
             # 🧩 Local development link — works, but user won't see the IP
-            verify_url = f"http://10.147.69.115:8000/api/verify-email/{uid}/{token}/"
+            verify_url = f"https://traillend-system-qqo7.onrender.com/api/verify-email/{uid}/{token}/"
 
 
             # HTML Email Template
@@ -989,7 +1054,7 @@ def api_register(request):
               <table align="center" style="max-width:600px; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
                 <tr>
                   <td style="background-color:#1976D2; text-align:center; padding:30px;">
-                    <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" />
+                    <img src="https://i.postimg.cc/Dw8pYLL5/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" />
                     <h1 style="color:#fff; margin:10px 0 0;">TrailLend</h1>
                     <p style="color:#cce6ff;">Empowering the Community Together 🌿</p>
                   </td>
@@ -1114,7 +1179,7 @@ def verify_email(request, uidb64, token):
             </head>
             <body>
               <div class="card">
-                <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" width="90" />
+                <img src="https://i.postimg.cc/Dw8pYLL5/TRAILLEND-ICON.png" width="90" />
                 <h1 style="color:#1976D2;">Email Verified!</h1>
                 <p style="color:#333;">Your TrailLend account has been successfully verified.</p>
                 <p style="color:#555;">You can now log in to your account.</p>
@@ -1285,7 +1350,7 @@ def reservation_update_api(request, pk: int):
     new_status = request.data.get('status')
     reason_text = request.data.get('reason', '').strip()
 
-    allowed = {'approved', 'rejected', 'borrowed', 'returned', 'pending'}
+    allowed = {'approved', 'declined', 'in use', 'returned', 'pending', 'cancelled'}
     if new_status not in allowed:
         return Response({'status': 'error', 'message': 'Invalid status'}, status=400)
 
@@ -1313,66 +1378,11 @@ def reservation_update_api(request, pk: int):
     r.save()
 
     # =====================================================
-    # SMART REMINDER SCHEDULER (Correct logic + no instant reminders)
+    # SMART REMINDER SCHEDULER (CALL ONLY — function is global)
     # =====================================================
-    from datetime import datetime, time, timedelta
-    from django.utils.timezone import make_aware
-    now = timezone.now()
 
-    def push_future(dt):
-        if dt <= now:
-            return now + timedelta(minutes=2)
-        return dt
-
-    def schedule_smart_alerts(reservation):
-        borrower = reservation.userborrower
-
-        # ---------- 1️⃣ Return Reminder
-        return_day_before = reservation.date_return - timedelta(days=1)
-        dt1 = make_aware(datetime.combine(return_day_before, time(18, 0)))
-        dt1 = push_future(dt1)
-
-        Notification.objects.create(
-            user=borrower,
-            reservation=reservation,
-            title="Return Reminder",
-            message="Your borrowed items are due tomorrow. Please be ready to return.",
-            type="return_reminder",
-            scheduled_at=dt1,
-            is_sent=False
-        )
-
-        # ---------- 2️⃣ Claim Reminder
-        dt2 = make_aware(datetime.combine(reservation.date_borrowed, time(6, 0)))
-        dt2 = push_future(dt2)
-
-        Notification.objects.create(
-            user=borrower,
-            reservation=reservation,
-            title="Claim Reminder",
-            message="You may now claim your reserved items today.",
-            type="claim_reminder",
-            scheduled_at=dt2,
-            is_sent=False
-        )
-
-        # ---------- 3️⃣ Claim Delay Warning
-        dt3 = reservation.created_at + timedelta(hours=1)
-        dt3 = push_future(dt3)
-
-        Notification.objects.create(
-            user=borrower,
-            reservation=reservation,
-            title="Claim Delay Warning",
-            message="You haven't claimed your items yet. Please claim them as soon as possible.",
-            type="warning_claim_delay",
-            scheduled_at=dt3,
-            is_sent=False
-        )
-
-    # Run scheduler ONLY when approved
     if new_status == "approved":
-        schedule_smart_alerts(r)
+        schedule_smart_alerts(r)   # ✅ KEEP THIS — uses the GLOBAL function
 
     # =====================================================
     # INSTANT NOTIFICATIONS
@@ -1417,7 +1427,7 @@ def reservation_update_api(request, pk: int):
         )
         notif.qr_code.save(f"qr_{r.transaction_id}.png", qr_file)
 
-    elif new_status == "rejected":
+    elif new_status == "declined":
         Notification.objects.create(
             user=r.userborrower,
             reservation=r,
@@ -1429,6 +1439,9 @@ def reservation_update_api(request, pk: int):
         )
 
     return Response({"status": "success"})
+
+
+
 
 
 
@@ -1619,12 +1632,8 @@ class CreateReservationView(APIView):
 
     @transaction.atomic
     def post(self, request):
-
-
         try:
             borrower = UserBorrower.objects.get(user=request.user)
-
-
 
             main_item_id = int(request.data.get("main_item_id"))
             main_item_qty = int(request.data.get("main_item_qty"))
@@ -1636,181 +1645,84 @@ class CreateReservationView(APIView):
             priority = request.data.get("priority", "Low")
             priority_detail = request.data.get("priority_detail", "")
             message = request.data.get("message", "")
+
             letter_img = request.FILES.get("letter_image")
             valid_id_img = request.FILES.get("valid_id_image")
+
             contact_number = request.data.get("contact", borrower.contact_number)
 
-         
-
-            if start_date > end_date:
-                return Response({"detail": "Invalid date range"}, status=400)
-
-            # BAD BORROWER
-            is_bad = borrower.borrower_status == "Bad" or borrower.late_count >= 3
-            if is_bad and priority == "Low":
-                
-                return Response({
-                    "detail": "You have 3 or more violations. Please clear your status at the GSO office."
-                }, status=403)
-
-            # PRIORITY SCORE
-            def get_priority_score(pri, detail):
-                detail = (detail or "").strip().lower()
-                if pri == "High" and detail == "funeral":
-                    return 1
-                if pri == "High" and "government" in detail:
-                    return 2
-                if pri == "Low" and not is_bad:
-                    return 3
-                if pri == "Low" and is_bad:
-                    return 4
-                return 10
-
-            priority_score = get_priority_score(priority, priority_detail)
-            
-
-            # TEMP RESERVATION
-            
-            reservation = Reservation.objects.create(
-                userborrower=borrower,
-                date_borrowed=start_date,
-                date_return=end_date,
-                priority=priority,
-                priority_detail=priority_detail,
-                message=message,
-                status="pending",
-                letter_image=letter_img,
-                valid_id_image=valid_id_img,
-                contact=contact_number,
-                temp_main_item=main_item_id
-            )
-
-            # Date suggestion
-            def suggest_new_ranges(item, required_qty):
-                
-                suggestions = []
-                days_needed = (end_date - start_date).days + 1
-                check_date = end_date + timedelta(days=1)
-
-                while len(suggestions) < 3:
-                    new_start = check_date
-                    new_end = new_start + timedelta(days=days_needed - 1)
-
-                    overlap = ReservationItem.objects.filter(
-                        item=item,
-                        reservation__status__in=["pending", "approved", "in use"],
-                        reservation__date_borrowed__lte=new_end,
-                        reservation__date_return__gte=new_start,
-                    )
-
-                    reserved = overlap.aggregate(total=Sum("quantity"))["total"] or 0
-                    available = item.qty - reserved
-
-                    if available >= required_qty:
-                        suggestions.append({
-                            "start": new_start.isoformat(),
-                            "end": new_end.isoformat()
-                        })
-
-                    check_date += timedelta(days=1)
-
-                print("📌 Suggested ranges:", suggestions)
-                return suggestions
-
-            # VALIDATION
-            def check_item(item_id, qty):
-                
-                item = Item.objects.select_for_update().get(item_id=item_id)
-
-                overlaps = ReservationItem.objects.filter(
-                    item=item,
-                    reservation__status__in=["pending", "approved", "in use"],
-                    reservation__date_borrowed__lte=end_date,
-                    reservation__date_return__gte=start_date,
-                )
-
-                used = overlaps.aggregate(total=Sum("quantity"))["total"] or 0
-                available = item.qty - used
-
-                print(f"   → Stock: {item.qty}, Used: {used}, Available: {available}")
-
-                if available >= qty:
-                    
-                    return {"ok": True}
-
-               
-                return {
-                    "ok": False,
-                    "message": "This item is fully reserved during your selected dates.",
-                    "ranges": suggest_new_ranges(item, qty)
-                }
-
-            # Validate all
-            all_items = [(main_item_id, main_item_qty)] + [
-                (int(it["id"]), int(it["qty"])) for it in added_items
-            ]
-
-            failed = None
-
-            for item_id, qty in all_items:
-                result = check_item(item_id, qty)
-                if not result["ok"]:
-                    failed = result
-                    break
-
-            # FAIL → 409 JSON
-            if failed:
-                
-                debug_json = {
-                    "detail": failed["message"],
-                    "suggest_next": True,
-                    "suggested_ranges": failed["ranges"],
-                    "unavailable_items": [{"name": "Item", "available": False}]
-                }
-                
-
-                return Response(
-                    json.loads(json.dumps(debug_json, cls=DjangoJSONEncoder)),
-                    status=409
-                )
-
-            # SUCCESS — save items
-            
-            for item_id, qty in all_items:
-                item = Item.objects.get(item_id=item_id)
-                ReservationItem.objects.create(
-                    reservation=reservation,
-                    item=item,
-                    item_name=item.name,
-                    quantity=qty
-                )
-
-            reservation.status = "pending"
-            reservation.save()
-
-            
-            Notification.objects.create(
-                user=borrower,
-                reservation=reservation,
-                title="Pending Reservation",
-                message=f"Your reservation ({reservation.transaction_id}) is pending admin approval.",
-                type="pending",
-                is_sent=True
-            )
-
-            
-            return Response({
-                "success": True,
-                "reservation_id": reservation.id,
-                "transaction_id": reservation.transaction_id,
-                "auto_approved": False
-            }, status=201)
-
         except Exception as e:
-            
-            print(traceback.format_exc())
-            return Response({"detail": "SERVER ERROR", "error": str(e)}, status=500)
+            return Response({"detail": "Invalid payload", "error": str(e)}, status=400)
 
+        if start_date > end_date:
+            return Response({"detail": "Invalid date range"}, status=400)
+
+        reservation = Reservation.objects.create(
+            userborrower=borrower,
+            date_borrowed=start_date,
+            date_return=end_date,
+            priority=priority,
+            priority_detail=priority_detail,
+            message=message,
+            status="pending",
+            letter_image=letter_img,
+            valid_id_image=valid_id_img,
+            contact=contact_number,
+        )
+
+        reservation.save()
+
+        def validate_and_add(item_id, qty):
+            item = Item.objects.select_for_update().get(item_id=item_id)
+
+            overlapping = ReservationItem.objects.filter(
+                item=item,
+                reservation__status__in=["pending", "approved", "in use"],
+                reservation__date_borrowed__lte=end_date,
+                reservation__date_return__gte=start_date,
+            ).aggregate(total=Sum("quantity"))
+
+            reserved_qty = overlapping["total"] or 0
+            available = item.qty - reserved_qty
+
+            if qty > available:
+                raise ValueError(f"{item.name}: only {available} available.")
+
+            ReservationItem.objects.create(
+                reservation=reservation,
+                item=item,
+                item_name=item.name,
+                quantity=qty
+            )
+
+
+        try:
+            validate_and_add(main_item_id, main_item_qty)
+        except Exception as e:
+            reservation.delete()
+            return Response({"detail": str(e)}, status=409)
+
+        for it in added_items:
+            try:
+                validate_and_add(int(it["id"]), int(it["qty"]))
+            except Exception as e:
+                reservation.delete()
+                return Response({"detail": str(e)}, status=409)
+
+        Notification.objects.create(
+            user=borrower,
+            reservation=reservation,
+            title="Pending Reservation",
+            message=f"Your reservation ({reservation.transaction_id}) is pending approval.",
+            type="pending",
+            is_sent=True
+        )
+
+        return Response({
+            "success": True,
+            "reservation_id": reservation.id,
+            "transaction_id": reservation.transaction_id
+        }, status=201)
 
 
 
@@ -2438,6 +2350,7 @@ def verify_qr(request, mode, code):
             "status": r.status,
             "start": r.date_borrowed,
             "end": r.date_return,
+            "delivered_by": r.delivered_by,
             "items": [
                 {
                     "name": it.item_name,
@@ -2493,7 +2406,8 @@ def update_reservation(request, mode, code):
                 reservation=reservation,
                 title="Item Claimed Successfully",
                 message=f"You have successfully claimed the following item(s): {item_list}.",
-                type="claimed"
+                type="claimed",
+                is_sent=True 
             )
 
             return JsonResponse({
@@ -2605,14 +2519,6 @@ def submit_feedback(request):
         reservation.date_returned = timezone.now()
         reservation.save()
 
-        # ------------------------------------------
-        #   RESTORE INVENTORY FOR ALL ITEMS
-        # ------------------------------------------
-        for ri in reservation.items.all():
-            item = ri.item
-            item.qty += ri.quantity
-            item.status = "Available"
-            item.save()
 
         # ------------------------------------------
         #      SEND NOTIFICATION (SMART)
@@ -2623,6 +2529,7 @@ def submit_feedback(request):
             title=notif_title,
             message=notif_message,
             type=notif_type,
+            is_sent=True
         )
 
         return JsonResponse({"message": "Feedback submitted and borrower notified successfully."})
@@ -2631,6 +2538,7 @@ def submit_feedback(request):
         return JsonResponse({"error": "Reservation not found"}, status=404)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
 
 
 
@@ -2654,28 +2562,50 @@ def monthly_reset(request=None):
         return JsonResponse({"error": str(e)}, status=500)
 
 def damage_loss_report_list(request):
-    reports = DamageReport.objects.select_related('reported_by').order_by('-date_reported')
+    # =============== DATABASE REPORTS ===============
+    db_reports = DamageReport.objects.select_related('reported_by').order_by('-date_reported')
 
-    report_data = []
-    for r in reports:
+    final_reports = []
+
+    for r in db_reports:
         local_time = timezone.localtime(r.date_reported)
 
-        report_data.append({
+        final_reports.append({
             'id': r.id,
-            'user_id': r.reported_by.id,
             'user_name': r.reported_by.full_name,
             'address': r.reported_by.address,
-            'type': r.report_type,   
+            'type': r.report_type,
             'image': r.image.url if r.image else 'No image',
-            'date': local_time.strftime("%Y-%m-%d %I:%M %p"),
+            'date': local_time.strftime("%Y-%m-%d"),
             'description': r.description,
             'quantity': r.quantity_affected,
             'location': r.location,
             'status': r.status,
-            'item_name': r.item.name if r.item else "Unknown Item"
+            'item_name': r.item.name if r.item else "Unknown Item",
         })
 
-    return render(request, 'damage_report.html', {'reports': report_data})
+    # =============== HARDCODED OLD DATA ===============
+    for h in HARD_CODED_DAMAGE_LOSS:
+
+        final_reports.append({
+            'id': h["id"],
+            'user_name': h["user_name"],
+            'address': h["address"],
+            'type': h["type"],
+            'image': "—",
+            'date': h["date"],  # already string YYYY-MM-DD
+            'description': h["description"],
+            'quantity': h["quantity"],
+            'location': h["location"],
+            'status': h["status"],
+            'item_name': h["item_name"],
+        })
+
+    # =============== SORT ALL REPORTS ===============
+    # Old hardcoded dates are YYYY-MM-DD, DB dates also formatted → safe to compare
+    final_reports = sorted(final_reports, key=lambda x: x["date"], reverse=True)
+
+    return render(request, 'damage_report.html', {'reports': final_reports})
 
 
 
@@ -3096,7 +3026,7 @@ def forgot_password(request):
                                 box-shadow:0 4px 10px rgba(0,0,0,0.05); margin-top:40px;">
                     <tr>
                       <td style="background-color:#1976D2; text-align:center; padding:30px;">
-                        <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
+                        <img src="https://i.ibb.co/T2Hyfdd/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
                         <h1 style="color:#fff; font-size:22px; margin:0;">TrailLend</h1>
                         <p style="color:#cce6ff; font-size:13px; margin:4px 0 0;">Empowering the Community Together 🌿</p>
                       </td>
@@ -3180,7 +3110,7 @@ def forgot_password(request):
                 <body style="font-family:'Poppins',Arial,sans-serif; background-color:#f4f6f9; padding:30px;">
                   <table align="center" style="max-width:600px; background:#fff; border-radius:10px; padding:30px;">
                     <tr><td style="text-align:center;">
-                      <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" width="70" alt="TrailLend" />
+                      <img src="https://i.ibb.co/T2Hyfdd/TRAILLEND-ICON.png" width="70" alt="TrailLend" />
                       <h2 style="color:#1976D2;">TrailLend Password Reset (Resent)</h2>
                       <p style="color:#333;">Here is your new reset code:</p>
                       <div style="margin:20px 0;">
@@ -3263,7 +3193,7 @@ def verify_reset_code(request):
                                 box-shadow:0 4px 10px rgba(0,0,0,0.05); margin-top:40px;">
                     <tr>
                       <td style="background-color:#1976D2; text-align:center; padding:30px;">
-                        <img src="https://i.postimg.cc/RhgvLvMb/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
+                        <img src="https://i.ibb.co/T2Hyfdd/TRAILLEND-ICON.png" alt="TrailLend Logo" width="80" style="margin-bottom:10px;" />
                         <h1 style="color:#fff; font-size:22px; margin:0;">TrailLend</h1>
                         <p style="color:#cce6ff; font-size:13px; margin:4px 0 0;">Empowering the Community Together 🌿</p>
                       </td>
@@ -3427,7 +3357,7 @@ def create_admin_borrow(request, item_id):
     if qty <= 0:
         return Response({"error": "Invalid quantity"}, status=400)
 
-    # ------------- CHECK AVAILABILITY FOR EACH DAY -------------
+    # CHECK AVAILABILITY
     current = start_date
     while current <= return_date:
         reserved = Reservation.objects.filter(
@@ -3453,7 +3383,7 @@ def create_admin_borrow(request, item_id):
 
         current += timedelta(days=1)
 
-    # ------------- SAVE ADMIN BORROW -------------
+    # SAVE ADMIN BORROW
     ab = AdminBorrow.objects.create(
         item=item,
         date=start_date,
@@ -3467,7 +3397,26 @@ def create_admin_borrow(request, item_id):
         status="In Use",
     )
 
+    # ========= SAFE TX-ID OVERRIDE =========
+    last = AdminBorrow.objects.order_by("-transaction_id").first()
+    if last:
+        try:
+            last_num = int(last.transaction_id[1:])
+        except:
+            last_num = 0
+    else:
+        last_num = 0
+
+    if last_num < 69:
+        last_num = 69
+
+    new_txid = f"T{last_num + 1:06d}"
+    ab.transaction_id = new_txid
+    ab.save(update_fields=["transaction_id"])
+    # =======================================
+
     return Response({"message": "Admin borrow recorded", "transaction_id": ab.transaction_id})
+
 
 
 
@@ -3615,8 +3564,6 @@ def return_admin_borrow(request, pk):
 def create_admin_borrow(request, item_id):
     data = json.loads(request.body)
 
-    # VALIDATION (quantity, availability, etc. — I will send complete version later)
-
     ab = AdminBorrow.objects.create(
         item_id=item_id,
         date=data["date"],
@@ -3629,7 +3576,24 @@ def create_admin_borrow(request, item_id):
         delivered_by=data["delivered_by"]
     )
 
-    # ADD TO HISTORY OUTPUT FORMAT
+    # ========= SAFE TX-ID OVERRIDE =========
+    last = AdminBorrow.objects.order_by("-transaction_id").first()
+    if last:
+        try:
+            last_num = int(last.transaction_id[1:])
+        except:
+            last_num = 0
+    else:
+        last_num = 0
+
+    if last_num < 69:
+        last_num = 69
+
+    new_txid = f"T{last_num + 1:06d}"
+    ab.transaction_id = new_txid
+    ab.save(update_fields=["transaction_id"])
+    # =======================================
+
     TransactionHistory.objects.create(
         transaction_id=ab.transaction_id,
         user_name=ab.borrower_name,
@@ -3643,6 +3607,7 @@ def create_admin_borrow(request, item_id):
     )
 
     return JsonResponse({"message": "Saved", "transaction_id": ab.transaction_id})
+
 
 
 @login_required
@@ -3832,41 +3797,106 @@ def suggest_items(request):
 
 
 def schedule_smart_alerts(reservation):
+    """
+    Schedules all Smart Alerts for a reservation.
+    EXACT MATCH to the Smart Alert table provided by the user.
+    """
+
     borrower = reservation.userborrower
+    claim_date = reservation.date_borrowed
+    return_date = reservation.date_return
+    now = timezone.now()  # current aware datetime
 
-    # 1️⃣ RETURN REMINDER — 6pm the day before date_return
-    return_day_before = reservation.date_return - timedelta(days=1)
-    return_dt = make_aware(datetime.combine(return_day_before, time(18, 0)))
+    # Helper: convert (date + time) into timezone-aware datetime
+    def aware(d, t):
+        return make_aware(datetime.combine(d, t))
 
-    Notification.objects.create(
-        user=borrower,
-        reservation=reservation,
-        title="Return Reminder",
-        message="This is a reminder to return your borrowed items tomorrow.",
-        type="return_reminder",
-        scheduled_at=return_dt,
-    )
+    # Helper: if scheduled time already passed, push forward by 2 minutes
+    def push_future(dt):
+        if dt <= timezone.now():
+            return timezone.now() + timedelta(minutes=2)
+        return dt
 
-    # 2️⃣ CLAIM REMINDER — 6am on date_borrowed
-    claim_dt = make_aware(datetime.combine(reservation.date_borrowed, time(6, 0)))
+    alerts = []
 
-    Notification.objects.create(
-        user=borrower,
-        reservation=reservation,
-        title="Claim Reminder",
-        message="You may now claim your reserved items today.",
-        type="claim_reminder",
-        scheduled_at=claim_dt,
-    )
+    # =====================================================
+    # 1️⃣ Pre-Claim Reminder
+    # When: ONE DAY before claiming date
+    # Time: 6:00 PM
+    # Message: “Reminder: You will claim your item tomorrow. Please prepare your requirements.”
+    # =====================================================
+    pre_claim_day = claim_date - timedelta(days=1)
+    alerts.append({
+        "title": "Pre-Claim Reminder",
+        "message": "Reminder: You will claim your item tomorrow. Please prepare your requirements.",
+        "send_at": aware(pre_claim_day, time(18, 0))
+    })
 
-    # 3️⃣ CLAIM WARNING — 1 hour after reservation
-    one_hour_later = reservation.created_at + timedelta(hours=1)
+    # =====================================================
+    # 2️⃣ Claiming Day Reminder
+    # When: Morning of ClaimDate
+    # Time: 6:00 AM
+    # Message: “You may now claim your item starting at 8:00 AM today.”
+    # =====================================================
+    alerts.append({
+        "title": "Claiming Day Reminder",
+        "message": "You may now claim your item starting at 8:00 AM today.",
+        "send_at": aware(claim_date, time(6, 0))
+    })
 
-    Notification.objects.create(
-        user=borrower,
-        reservation=reservation,
-        title="Claiming Delay Warning",
-        message="You still haven't claimed your reserved items. Please claim them as soon as possible.",
-        type="warning_claim_delay",
-        scheduled_at=one_hour_later,
-    )
+    # =====================================================
+    # 3️⃣ Pre-Return Reminder
+    # When: ONE DAY before return date
+    # Time: 6:00 PM
+    # Message: “Reminder: Please return the item before 8:00 AM tomorrow.”
+    # =====================================================
+    pre_return_day = return_date - timedelta(days=1)
+    alerts.append({
+        "title": "Pre-Return Reminder",
+        "message": "Reminder: Please return the item before 8:00 AM tomorrow.",
+        "send_at": aware(pre_return_day, time(18, 0))
+    })
+
+    # =====================================================
+    # 4️⃣ Return Day Reminder
+    # When: Morning of return date
+    # Time: 6:00 AM
+    # Message: “Please return the item before 8:00 AM today.”
+    # =====================================================
+    alerts.append({
+        "title": "Return Day Reminder",
+        "message": "Please return the item before 8:00 AM today.",
+        "send_at": aware(return_date, time(6, 0))
+    })
+
+    # =====================================================
+    # 5️⃣ Same-Day Return Reminder
+    # When: BorrowDate = ReturnDate
+    # Time: 3:00 PM
+    # Message: “Please return the item before 5:00 PM today.”
+    # =====================================================
+    if claim_date == return_date:
+        alerts.append({
+            "title": "Same-Day Return Reminder",
+            "message": "Please return the item before 5:00 PM today.",
+            "send_at": aware(return_date, time(15, 0))
+        })
+
+    # =====================================================
+    # SAVE ALERTS TO DATABASE
+    # scheduled_at = exact send time
+    # is_sent = False (to be sent later by scheduler)
+    # =====================================================
+    for alert in alerts:
+        send_time = push_future(alert["send_at"])  # avoid past scheduling
+
+        Notification.objects.create(
+            user=borrower,
+            reservation=reservation,
+            title=alert["title"],
+            message=alert["message"],
+            type="smart_alert",
+            scheduled_at=send_time,
+            is_sent=False
+        )
+

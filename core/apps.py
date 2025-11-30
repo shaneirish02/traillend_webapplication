@@ -8,12 +8,19 @@ class CoreConfig(AppConfig):
     name = 'core'
 
     def ready(self):
+        """
+        - Automatically create superuser (if env vars exist)
+        - Automatically start the background scheduler loop
+        """
+
+        # ==============================
+        # 1. Auto-create superuser
+        # ==============================
         User = get_user_model()
         username = os.environ.get("DJANGO_SUPERUSER_USERNAME")
         email = os.environ.get("DJANGO_SUPERUSER_EMAIL")
         password = os.environ.get("DJANGO_SUPERUSER_PASSWORD")
 
-        # Only create if env vars exist
         if username and password:
             try:
                 if not User.objects.filter(username=username).exists():
@@ -26,5 +33,15 @@ class CoreConfig(AppConfig):
                 else:
                     print(f"✔ Superuser '{username}' already exists.")
             except (OperationalError, ProgrammingError):
-                # Database not ready (migrations not finished)
+                # This happens before migrations; ignore safely
                 pass
+
+        # ==============================
+        # 2. Start background scheduler
+        # ==============================
+        try:
+            from core.scheduler import start_scheduler_loop
+            start_scheduler_loop()
+        except Exception as e:
+            # Fail silently so app still loads
+            print(f"[Scheduler Init Error] {e}")

@@ -55,6 +55,8 @@ urlpatterns = [
 
     path("api/register/", views.api_register),
     path("api/verify-email/<uidb64>/<token>/", views.verify_email, name="verify_email"),
+    path("api/verify-email/<uidb64>/<token>/", views.verify_email, name="verify-email"),
+
     path("api/login/", views.api_login),
     path("api/inventory_list/", views.api_inventory_list),
     path("api/inventory_detail/<int:id>/", views.api_inventory_detail),
@@ -115,6 +117,8 @@ urlpatterns = [
     path("api/suggest-items/", views.suggest_items, name="suggest-items"),
     path("damage-report/update-status/<int:report_id>/", views.update_report_status, name='update_report_status'),
     path("api/item/<int:item_id>/admin-borrow/", views.admin_borrow_create, name="admin_borrow_create"),
+    path('transaction-history/', views.transaction_log, name='transaction_history')
+
 ]
 
 if settings.DEBUG:

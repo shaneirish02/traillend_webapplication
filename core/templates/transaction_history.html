@@ -304,6 +304,7 @@
 
 <script>
 (function() {
+
   const rows = Array.from(document.querySelectorAll('.history-table tbody tr'))
     .filter(tr => tr.querySelectorAll('td').length >= 6);
 
@@ -313,50 +314,59 @@
   const toDate = document.getElementById('toDate');
   const rowsPerPage = document.getElementById('rowsPerPage');
 
-  // helper for date
-  function parseDate(s) {
-    if (!s || s === '—') return null;
-    return new Date(s.replace(' ', 'T'));
+  // ✔ Correct parser for BOTH formats
+  function parseDate(raw) {
+      if (!raw || raw === "—") return null;
+
+      raw = raw.trim();
+
+      // OLD DATA: "2025-01-10"
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+          return new Date(raw + "T00:00:00");
+      }
+
+      // NEW DATA: "2025-11-30 05:39 PM"
+      if (raw.includes("AM") || raw.includes("PM")) {
+          return new Date(Date.parse(raw));
+      }
+
+      return new Date(raw);
   }
 
   function applyFilters() {
-    const q = (searchBox.value || '').toLowerCase().trim();
-    const selectedStatus = (statusFilter.value || '').toLowerCase();
-    const from = fromDate.value ? new Date(fromDate.value) : null;
-    const to = toDate.value ? new Date(toDate.value) : null;
-    const limit = parseInt(rowsPerPage.value || '10', 10);
+      const q = (searchBox.value || '').toLowerCase();
+      const selectedStatus = (statusFilter.value || '').toLowerCase();
+      const from = fromDate.value ? new Date(fromDate.value + "T00:00:00") : null;
+      const to = toDate.value ? new Date(toDate.value + "T23:59:59") : null;
+      const limit = parseInt(rowsPerPage.value || '10', 10);
 
-    let shown = 0;
+      let shown = 0;
 
-    rows.forEach(tr => {
-      const txId = tr.querySelector('.txid')?.textContent.toLowerCase() || '';
-      const user = tr.querySelector('.user')?.textContent.toLowerCase() || '';
-      const item = tr.querySelector('.item')?.textContent.toLowerCase() || '';
-      const statusText = tr.querySelector('.status span')?.textContent.trim().toLowerCase() || '';
-      const receiveTxt = tr.querySelector('.receive')?.textContent.trim() || '—';
+      rows.forEach(tr => {
+          const txId = tr.querySelector('.txid')?.textContent.toLowerCase() || '';
+          const user = tr.querySelector('.user')?.textContent.toLowerCase() || '';
+          const item = tr.querySelector('.item')?.textContent.toLowerCase() || '';
+          const statusText = tr.querySelector('.status span')?.textContent.trim().toLowerCase() || '';
+          const receiveTxt = tr.querySelector('.receive')?.textContent.trim() || '—';
 
-      // ✅ Search filter
-      const matchesSearch = !q || txId.includes(q) || user.includes(q) || item.includes(q);
+          const matchesSearch =
+              !q || txId.includes(q) || user.includes(q) || item.includes(q);
 
-      // ✅ Status filter
-      const matchesStatus = !selectedStatus || statusText === selectedStatus;
+          const matchesStatus =
+              !selectedStatus || statusText === selectedStatus;
 
-      // ✅ Date filter
-      let matchesDate = true;
-      if (from || to) {
-        const d = parseDate(receiveTxt);
-        if (from && (!d || d < from)) matchesDate = false;
-        if (to) {
-          const end = new Date(to);
-          end.setDate(end.getDate() + 1);
-          if (!d || d >= end) matchesDate = false;
-        }
-      }
+          let matchesDate = true;
 
-      const visible = matchesSearch && matchesStatus && matchesDate && shown < limit;
-      tr.style.display = visible ? '' : 'none';
-      if (visible) shown++;
-    });
+          const d = parseDate(receiveTxt);
+
+          if (from && (!d || d < from)) matchesDate = false;
+          if (to && (!d || d > to)) matchesDate = false;
+
+          const visible = matchesSearch && matchesStatus && matchesDate && shown < limit;
+
+          tr.style.display = visible ? '' : 'none';
+          if (visible) shown++;
+      });
   }
 
   [searchBox, statusFilter, fromDate, toDate, rowsPerPage].forEach(el => {
@@ -367,5 +377,6 @@
   applyFilters();
 })();
 </script>
+
 
 {% endblock %}

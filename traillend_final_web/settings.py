@@ -32,6 +32,7 @@ ALLOWED_HOSTS = [
 
     # Your LAN IPs (optional)
     "10.147.69.115",
+    "10.178.207.115",
 ]
 
 
@@ -54,7 +55,7 @@ INSTALLED_APPS = [
     'cloudinary',
     'cloudinary_storage',
 
-    'core',
+    'core.apps.CoreConfig',
 ]
 
 
@@ -154,7 +155,9 @@ CLOUDINARY_STORAGE = {
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
-MEDIA_URL = '/media/'
+MEDIA_URL = 'https://res.cloudinary.com/{}/'.format(
+    os.environ.get("CLOUDINARY_CLOUD_NAME")
+)
 
 
 # =========================================================
