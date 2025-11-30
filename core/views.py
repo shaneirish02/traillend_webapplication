@@ -984,13 +984,11 @@ def logout(request):
 @csrf_exempt
 def api_register(request):
     """
-    API endpoint for registration with HTML email and local dev IP support.
+    API endpoint for registration with HTML email and Gmail SMTP fail-safe.
     """
     if request.method == "POST":
         try:
             data = json.loads(request.body or "{}")
-            print("REGISTER DATA RECEIVED:", data) 
-            
             username = data.get("username")
             password = data.get("password")
             confirm_password = data.get("confirmPassword")
@@ -999,23 +997,32 @@ def api_register(request):
             address = data.get("address")
             email = data.get("email")
 
+            print("REGISTER DATA RECEIVED:", data)
 
             # Validation
             if not all([username, password, confirm_password, full_name, email]):
-                return JsonResponse({"success": False, "message": "Missing required fields"}, status=400)
-
+                return JsonResponse(
+                    {"success": False, "message": "Missing required fields"},
+                    status=400
+                )
 
             if User.objects.filter(username=username).exists():
-                return JsonResponse({"success": False, "message": "Username already exists"}, status=400)
-
+                return JsonResponse(
+                    {"success": False, "message": "Username already exists"},
+                    status=400
+                )
 
             if User.objects.filter(email=email).exists():
-                return JsonResponse({"success": False, "message": "Email already registered"}, status=400)
-
+                return JsonResponse(
+                    {"success": False, "message": "Email already registered"},
+                    status=400
+                )
 
             if password != confirm_password:
-                return JsonResponse({"success": False, "message": "Passwords do not match"}, status=400)
-
+                return JsonResponse(
+                    {"success": False, "message": "Passwords do not match"},
+                    status=400
+                )
 
             # Create inactive user
             user = User.objects.create_user(
@@ -1025,7 +1032,6 @@ def api_register(request):
                 is_active=False
             )
 
-
             UserBorrower.objects.create(
                 user=user,
                 full_name=full_name,
@@ -1033,15 +1039,10 @@ def api_register(request):
                 address=address
             )
 
-
-            # Generate verification link (use your local IP for now)
+            # Verification link
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
-
-
-            # 🧩 Local development link — works, but user won't see the IP
             verify_url = f"https://traillend-system-qqo7.onrender.com/api/verify-email/{uid}/{token}/"
-
 
             # HTML Email Template
             html_message = f"""
@@ -1068,7 +1069,6 @@ def api_register(request):
                     <p style="color:#555;">Thank you for registering on <strong>TrailLend</strong>!
                     To activate your account, please verify your email address by clicking the button below:</p>
 
-
                     <div style="text-align:center; margin:30px 0;">
                       <a href="{verify_url}"
                          style="background-color:#1976D2; color:#fff; text-decoration:none;
@@ -1076,7 +1076,6 @@ def api_register(request):
                         Verify My Email
                       </a>
                     </div>
-
 
                     <p style="color:#777; font-size:14px;">If you didn’t create this account, please ignore this email.</p>
                     <hr style="border:none; border-top:1px solid #eee; margin:30px 0;">
@@ -1091,31 +1090,33 @@ def api_register(request):
             </html>
             """
 
+            # ⭐ Gmail SMTP fail-safe block ⭐
+            try:
+                send_mail(
+                    subject="Verify Your TrailLend Account",
+                    message="Please verify your email.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                    html_message=html_message,
+                )
+                email_status = "sent"
+            except Exception as e:
+                print("EMAIL SEND FAILED:", e)
+                email_status = "failed"
 
-            send_mail(
-                subject="Verify Your TrailLend Account",
-                message="Please verify your TrailLend account.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                fail_silently=False,
-                html_message=html_message
-            )
-
-
+            # ⭐ Always return success so signup does NOT break
             return JsonResponse({
                 "success": True,
-                "message": "Registration successful! Check your email to verify your account."
+                "email_status": email_status,
+                "message": "Registration successful! Check your email if it was sent."
             }, status=201)
 
-
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            print("REGISTER ERROR:", e)
             return JsonResponse({"success": False, "message": str(e)}, status=400)
 
-
     return JsonResponse({"success": False, "message": "Invalid request method"}, status=405)
-
 
 
 
