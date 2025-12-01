@@ -546,27 +546,8 @@ def to_date(d):
     except:
         return None
 
-def fix_xavier_wrong_id():
-    from core.models import Reservation
-
-    try:
-        # Find ONLY Xavier Lint's wrong reservation
-        r = Reservation.objects.filter(
-            transaction_id="T000002",
-            userborrower__full_name="Xavier Lint"
-        ).first()
-
-        if r and r.transaction_id != "T000071":
-            r.transaction_id = "T000071"
-            r.save(update_fields=["transaction_id"])
-            print("✔ FIXED: Xavier Lint updated to T000071")
-    except Exception as e:
-        print("Error fixing Xavier transaction:", e)
 
 def statistics_data(request):
-
-    fix_xavier_wrong_id()  
-     
     start = request.GET.get("start")
     end = request.GET.get("end")
     status_filter = request.GET.get("status", "all").lower()
