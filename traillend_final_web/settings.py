@@ -22,10 +22,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key")
 DEBUG = os.environ.get("DEBUG", "True") == "True"
 
+
 # =========================================================
 # ALLOWED HOSTS
 # =========================================================
 ALLOWED_HOSTS = [
+    "*",  # allow local + Render
     "localhost",
     "127.0.0.1",
     "traillend-system-qqo7.onrender.com",
@@ -46,6 +48,7 @@ INSTALLED_APPS = [
 
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
+
     'corsheaders',
     'django_extensions',
 
@@ -63,12 +66,15 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
 
-    # CORS MUST BE AT THE TOP
+    # CORS MUST BE BEFORE SESSION/CACHE
     'corsheaders.middleware.CorsMiddleware',
 
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+
+    # IMPORTANT for login
     'django.middleware.csrf.CsrfViewMiddleware',
+
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -89,7 +95,6 @@ REST_FRAMEWORK = {
     ],
 }
 
-
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=31),
@@ -99,30 +104,38 @@ SIMPLE_JWT = {
 }
 
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://traillend-system-qqo7.onrender.com",
-    "https://*.onrender.com",
-]
+# =========================================================
+# CORS / CSRF (IMPORTANT FIX FOR API LOGIN)
+# =========================================================
 
+# Allow all origins (React Native / Mobile app support)
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# Fix login issues on Render Free
-CSRF_COOKIE_SECURE = False
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_HTTPONLY = False
-CSRF_USE_SESSIONS = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_REFERRER_POLICY = "no-referrer-when-downgrade"
-
-
-# Important
 CORS_ALLOW_HEADERS = [
     "authorization",
     "content-type",
     "accept",
     "origin",
 ]
+
+# Your Render domain
+CSRF_TRUSTED_ORIGINS = [
+    "https://traillend-system-qqo7.onrender.com",
+    "https://*.onrender.com",
+]
+
+# Fix Referer / HTTPS issues on Render FREE Tier
+CSRF_COOKIE_SECURE = False
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_HTTPONLY = False
+CSRF_USE_SESSIONS = True
+
+# Tell Django to trust Render’s HTTPS proxy
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Disable strict Referer checking (fix 403 during login/register)
+SECURE_REFERRER_POLICY = "no-referrer-when-downgrade"
 
 
 # =========================================================
@@ -131,6 +144,7 @@ CORS_ALLOW_HEADERS = [
 ROOT_URLCONF = 'traillend_final_web.urls'
 WSGI_APPLICATION = 'traillend_final_web.wsgi.application'
 
+
 # =========================================================
 # TEMPLATES
 # =========================================================
@@ -138,7 +152,7 @@ TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [
-            BASE_DIR / 'core' / 'templates',   # <-- THIS IS YOUR FOLDER
+            BASE_DIR / 'core' / 'templates',
         ],
         'APP_DIRS': True,
         'OPTIONS': {
@@ -151,6 +165,7 @@ TEMPLATES = [
         },
     },
 ]
+
 
 # =========================================================
 # DATABASE (RENDER)
@@ -176,7 +191,6 @@ CLOUDINARY_STORAGE = {
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
 
-
 # =========================================================
 # STATIC FILES
 # =========================================================
@@ -187,17 +201,15 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 
 # =========================================================
-# EMAIL SETTINGS (SENDGRID SMTP)
+# EMAIL SETTINGS
 # =========================================================
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = "apikey"  # IMPORTANT: literally this text
+EMAIL_HOST_USER = "apikey"
 EMAIL_HOST_PASSWORD = os.environ.get("SENDGRID_API_KEY")
 DEFAULT_FROM_EMAIL = "traillendsystem@gmail.com"
-
-
 
 
 # =========================================================
@@ -217,7 +229,7 @@ LOGIN_URL = '/login/'
 
 
 # =========================================================
-# FIREBASE INITIALIZATION (ENV ONLY)
+# FIREBASE INIT
 # =========================================================
 from core.firebase import initialize_firebase
 initialize_firebase()
