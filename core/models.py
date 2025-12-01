@@ -83,10 +83,6 @@ class Reservation(models.Model):
     # ---------------------------------------------------------
     def save(self, *args, **kwargs):
 
-        # TEMP FIX: Convert wrong ID T000002 → T000071
-        if self.transaction_id == "T000002":
-            self.transaction_id = "T000071"
-
         # Use your TransactionCounter for NEW reservations
         if not self.transaction_id or self.transaction_id == "T000000":
             from .models import TransactionCounter
