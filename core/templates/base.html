@@ -521,7 +521,7 @@
     }
 
     fetchPendingRequests();
-    setInterval(fetchPendingRequests, 10000);
+    setInterval(fetchPendingRequests, 30000);
     });
   </script>
 
@@ -616,9 +616,9 @@ async function updatePendingCount() {
   }
 }
 
-// 🔁 Update every 10 seconds
+// 🔁 Update every 30 seconds
 updatePendingCount();
-setInterval(updatePendingCount, 10000);
+setInterval(updatePendingCount, 30000);
 
 // Toggle panel when clicking the bell
 function togglePendingPanel() {
