@@ -7,7 +7,7 @@ from django.http import HttpResponse
 
 from .views import (
     CheckAvailabilityView, CreateReservationView,
-    forgot_password, verify_reset_code, reset_admin_password
+    forgot_password, verify_reset_code, reset_admin_password, run_smart_scheduler,
 )
 from . import views
 
@@ -27,6 +27,7 @@ urlpatterns = [
 
     # 👉 Add the migration runner here
     path("run-migrations/", run_migrations),
+    path('api/run-scheduler/', run_smart_scheduler),
 
     # Admin web views
     path("dashboard/", views.dashboard, name="dashboard"),

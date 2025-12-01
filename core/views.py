@@ -353,13 +353,17 @@ def inventory_createitem(request):
 
     return render(request, "inventory_createitem.html")
 
-@csrf_exempt
-def run_scheduler_api(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "POST only"}, status=405)
-
+@api_view(["POST"])
+def run_smart_scheduler(request):
+    from core.scheduler import run_scheduled_notifications
     sent = run_scheduled_notifications()
-    return JsonResponse({"sent": sent})
+    return Response({"status": "ok", "sent": sent})
+
+@api_view(['POST'])
+def run_smart_scheduler(request):
+    from core.scheduler import run_scheduled_notifications
+    sent = run_scheduled_notifications()
+    return Response({"status": "ok", "sent_notifications": sent})
 
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
