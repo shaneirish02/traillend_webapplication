@@ -546,9 +546,24 @@ def to_date(d):
     except:
         return None
 
+def fix_xavier_transaction_id():
+    from core.models import Reservation
+
+    try:
+        wrong = Reservation.objects.filter(
+            transaction_id="T000002",
+            userborrower__full_name="Xavier Lint"
+        ).first()
+
+        if wrong and wrong.transaction_id != "T000071":
+            wrong.transaction_id = "T000071"
+            wrong.save(update_fields=["transaction_id"])
+    except Exception as e:
+        print("ID FIX ERROR:", e)
 
 def statistics_data(request):
 
+    fix_xavier_transaction_id() 
     start = request.GET.get("start")
     end = request.GET.get("end")
     status_filter = request.GET.get("status", "all").lower()
@@ -1455,47 +1470,124 @@ PRIORITY_LABELS = {
 
 
 
+from datetime import datetime, time, timedelta
+from django.utils.timezone import make_aware
+from django.utils import timezone
+
 def schedule_smart_notifications(reservation):
     borrower = reservation.userborrower
     item = reservation.item
 
     claim_date = reservation.date_borrowed
     return_date = reservation.date_return
+    now = timezone.now()
 
-    # --- 1. Reminder @ 6PM day before return date ---
-    reminder1_time = datetime.combine(return_date - timedelta(days=1), time(18, 0))
-
-    Notification.objects.create(
-        user=borrower,
-        reservation=reservation,
-        title="Return Reminder",
-        message=f"Your borrowed item '{item.name}' is due tomorrow ({return_date}).",
-        type="return_reminder_smart",
-        scheduled_at=reminder1_time,
-    )
-
-    # --- 2. Reminder @ 6AM on claim day ---
-    reminder2_time = datetime.combine(claim_date, time(6, 0))
+    # =====================================================
+    # 🔵 0. TEST NOTIFICATION (5 minutes after approval)
+    # =====================================================
+    test_time = now + timedelta(minutes=5)
 
     Notification.objects.create(
         user=borrower,
         reservation=reservation,
-        title="Claim Reminder",
-        message=f"Your item '{item.name}' can be claimed today.",
-        type="claim_reminder_smart",
-        scheduled_at=reminder2_time,
+        title="TEST: Smart Alert",
+        message="This is your 5-minute test smart alert.",
+        type="test_smart_alert",
+        scheduled_at=test_time,
+        is_sent=False
     )
 
-    # --- 3. Reminder @ 1 hour AFTER claiming (only if claimed) ---
-    if reservation.date_receive:
-        reminder3_time = reservation.date_receive + timedelta(hours=1)
+    # =====================================================
+    # 1️⃣ PRE-CLAIM REMINDER
+    # When: One day before claiming date
+    # Time: 6:00 PM
+    # Message: “You will claim your item tomorrow…”
+    # =====================================================
+    pre_claim_day = claim_date - timedelta(days=1)
+    pre_claim_time = make_aware(datetime.combine(pre_claim_day, time(18, 0)))
+
+    Notification.objects.create(
+        user=borrower,
+        reservation=reservation,
+        title="Pre-Claim Reminder",
+        message="Reminder: You will claim your item tomorrow. Please prepare your requirements.",
+        type="pre_claim_smart",
+        scheduled_at=pre_claim_time,
+        is_sent=False
+    )
+
+    # =====================================================
+    # 2️⃣ CLAIMING DAY REMINDER
+    # When: Claiming day
+    # Time: 6:00 AM
+    # Message: “You may now claim your item at 8:00 AM…”
+    # =====================================================
+    claim_morning = make_aware(datetime.combine(claim_date, time(6, 0)))
+
+    Notification.objects.create(
+        user=borrower,
+        reservation=reservation,
+        title="Claiming Day Reminder",
+        message="You may now claim your item starting at 8:00 AM today.",
+        type="claim_day_smart",
+        scheduled_at=claim_morning,
+        is_sent=False
+    )
+
+    # =====================================================
+    # 3️⃣ PRE-RETURN REMINDER
+    # When: One day before return date
+    # Time: 6:00 PM
+    # Message: “Return before 8:00 AM tomorrow…”
+    # =====================================================
+    pre_return_day = return_date - timedelta(days=1)
+    pre_return_time = make_aware(datetime.combine(pre_return_day, time(18, 0)))
+
+    Notification.objects.create(
+        user=borrower,
+        reservation=reservation,
+        title="Pre-Return Reminder",
+        message="Reminder: Please return the item before 8:00 AM tomorrow.",
+        type="pre_return_smart",
+        scheduled_at=pre_return_time,
+        is_sent=False
+    )
+
+    # =====================================================
+    # 4️⃣ RETURN DAY REMINDER
+    # When: On the return date
+    # Time: 6:00 AM
+    # Message: “Return before 8:00 AM today…”
+    # =====================================================
+    return_morning = make_aware(datetime.combine(return_date, time(6, 0)))
+
+    Notification.objects.create(
+        user=borrower,
+        reservation=reservation,
+        title="Return Day Reminder",
+        message="Please return the item before 8:00 AM today.",
+        type="return_day_smart",
+        scheduled_at=return_morning,
+        is_sent=False
+    )
+
+    # =====================================================
+    # 5️⃣ SAME-DAY RETURN REMINDER
+    # When: BorrowDate = ReturnDate
+    # Time: 3:00 PM
+    # Message: “Return before 5:00 PM today…”
+    # =====================================================
+    if claim_date == return_date:
+        same_day_time = make_aware(datetime.combine(return_date, time(15, 0)))
+
         Notification.objects.create(
             user=borrower,
             reservation=reservation,
-            title="Follow-Up Reminder",
-            message=f"It has been 1 hour since your claim time for '{item.name}'.",
-            type="claim_late_smart",
-            scheduled_at=reminder3_time,
+            title="Same-Day Return Reminder",
+            message="Please return the item before 5:00 PM today.",
+            type="same_day_smart",
+            scheduled_at=same_day_time,
+            is_sent=False
         )
 
 def pretty_priority(p: str) -> str:
