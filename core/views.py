@@ -359,6 +359,7 @@ def run_smart_scheduler(request):
     sent = run_scheduled_notifications()
     return Response({"status": "ok", "sent": sent})
 
+
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
 
