@@ -1237,6 +1237,9 @@ def verify_email(request, uidb64, token):
 
 
 @csrf_exempt
+@api_view(['POST'])
+@authentication_classes([])  
+@permission_classes([AllowAny])  
 def api_login(request):
     """
     Mobile login API — allows restricted borrowers to login,
