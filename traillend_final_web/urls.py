@@ -7,10 +7,15 @@ from core.views import run_smart_scheduler
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path('api/', include('core.urls')),
-    path("", lambda request: redirect("login")),  # redirect root to login page
-    path("", include('core.urls')),
+
+    # CORRECTED: must have trailing slash
+    path("api/", include("core.urls")),
+
+    # Scheduler endpoint
     path("api/run-scheduler/", run_smart_scheduler),
+
+    # Redirect root → login page
+    path("", lambda request: redirect("login")),
 ]
 
 if settings.DEBUG:
