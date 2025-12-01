@@ -78,12 +78,21 @@ class Reservation(models.Model):
 
     delivered_by = models.CharField(max_length=255, null=True, blank=True) 
 
+    # ---------------------------------------------------------
+    # FIXED VERSION — One save() only
+    # ---------------------------------------------------------
     def save(self, *args, **kwargs):
+
+        # TEMP FIX: Convert wrong ID T000002 → T000071
+        if self.transaction_id == "T000002":
+            self.transaction_id = "T000071"
+
+        # Use your TransactionCounter for NEW reservations
         if not self.transaction_id or self.transaction_id == "T000000":
             from .models import TransactionCounter
             self.transaction_id = TransactionCounter.next_id()
-        super().save(*args, **kwargs)
 
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Reservation {self.transaction_id} ({self.date_borrowed} → {self.date_return})"
