@@ -4,6 +4,7 @@ from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.core.management import call_command
 from django.http import HttpResponse
+from .views import fix_images
 
 
 from .views import (
@@ -28,6 +29,8 @@ urlpatterns = [
 
     # 👉 Add the migration runner here
     path("run-migrations/", run_migrations),
+    path("fix-images/", fix_images, name="fix-images"),
+
 
 
     # Admin web views
