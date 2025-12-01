@@ -365,35 +365,38 @@ def run_smart_scheduler(request):
     return Response({"status": "ok", "sent": sent})
 
 def fix_images(request):
-    LOCAL_DIR = os.path.join(settings.BASE_DIR, "core", "static", "inventory", "items")
+    folder_path = os.path.join(settings.BASE_DIR, "core", "static", "inventory", "items")
 
-    output = []
+    if not os.path.exists(folder_path):
+        return HttpResponse("❌ Inventory items folder not found.")
 
-    for item in Item.objects.all():
-        if not item.image:
-            output.append(f"Skipping {item.name}: No image")
+    results = []
+
+    for file in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, file)
+
+        if not os.path.isfile(file_path):
             continue
 
-        image_name = os.path.basename(item.image.name)
+        # Match filename to item name
+        base = file.split(".")[0].replace("_", " ").replace("-", " ").title()
 
-        # Skip if already Cloudinary
-        if str(item.image).startswith("http"):
-            output.append(f"Already uploaded: {item.name}")
+        try:
+            item = Item.objects.get(name__icontains=base)
+        except Item.DoesNotExist:
+            results.append(f"⚠️ No DB item matches: {base}")
             continue
 
-        local_path = os.path.join(LOCAL_DIR, image_name)
+        # Upload to Cloudinary
+        upload_result = upload(file_path, folder="items")
 
-        if not os.path.exists(local_path):
-            output.append(f"Missing file for {item.name}: {local_path}")
-            continue
-
-        result = upload(local_path, folder="items/", resource_type="image")
-        item.image = result["secure_url"]
+        # Update DB record
+        item.image = upload_result["secure_url"]
         item.save()
 
-        output.append(f"Uploaded & updated: {item.name}")
+        results.append(f"✅ Updated {item.name}: {upload_result['secure_url']}")
 
-    return HttpResponse("<br>".join(output))
+    return HttpResponse("<br>".join(results))
 
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
