@@ -1238,59 +1238,50 @@ def verify_email(request, uidb64, token):
 
 @csrf_exempt
 @api_view(['POST'])
-@authentication_classes([])  
-@permission_classes([AllowAny])  
+@authentication_classes([])  # ⭐ disable DRF authentication (no CSRF)
+@permission_classes([AllowAny])  # ⭐ allow unauthenticated access
 def api_login(request):
     """
-    Mobile login API — allows restricted borrowers to login,
-    but returns their borrower_status so frontend can show modal.
+    Mobile login API — No CSRF required.
     """
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body or "{}")
-            username = data.get("username")
-            password = data.get("password")
 
-            if not username or not password:
-                return JsonResponse({
-                    "success": False,
-                    "message": "Username and password required"
-                }, status=400)
+    try:
+        data = request.data
+        username = data.get("username")
+        password = data.get("password")
 
-            user = authenticate(request, username=username, password=password)
-
-            if user is None:
-                return JsonResponse({
-                    "success": False,
-                    "message": "Invalid credentials"
-                }, status=401)
-
-            borrower = UserBorrower.objects.get(user=user)
-
-            # ⭐ ALLOW LOGIN FOR RESTRICTED ACCOUNTS
-            # DO NOT block login with 403
-            # Instead, return borrower_status to app
-            refresh = RefreshToken.for_user(user)
-
-            return JsonResponse({
-                "success": True,
-                "message": "Login successful",
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
-                "borrower_status": borrower.borrower_status,   # ⭐ VERY IMPORTANT
-                "late_count": borrower.late_count              # ⭐ Add for UI if needed
-            }, status=200)
-
-        except Exception as e:
+        if not username or not password:
             return JsonResponse({
                 "success": False,
-                "message": str(e)
+                "message": "Username and password required"
             }, status=400)
 
-    return JsonResponse({
-        "success": False,
-        "message": "Invalid request method"
-    }, status=405)
+        user = authenticate(request, username=username, password=password)
+
+        if user is None:
+            return JsonResponse({
+                "success": False,
+                "message": "Invalid credentials"
+            }, status=401)
+
+        borrower = UserBorrower.objects.get(user=user)
+
+        refresh = RefreshToken.for_user(user)
+
+        return JsonResponse({
+            "success": True,
+            "message": "Login successful",
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+            "borrower_status": borrower.borrower_status,
+            "late_count": borrower.late_count
+        }, status=200)
+
+    except Exception as e:
+        return JsonResponse({
+            "success": False,
+            "message": str(e)
+        }, status=400)
 
 
 
