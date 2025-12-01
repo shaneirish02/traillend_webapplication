@@ -169,11 +169,7 @@ CLOUDINARY_STORAGE = {
 }
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-STATICFILES_STORAGE = 'cloudinary_storage.storage.StaticHashedCloudinaryStorage'
 
-MEDIA_URL = 'https://res.cloudinary.com/{}/'.format(
-    os.environ.get("CLOUDINARY_CLOUD_NAME")
-)
 
 
 # =========================================================
