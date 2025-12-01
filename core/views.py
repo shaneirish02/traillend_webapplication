@@ -359,12 +359,6 @@ def run_smart_scheduler(request):
     sent = run_scheduled_notifications()
     return Response({"status": "ok", "sent": sent})
 
-@api_view(['POST'])
-def run_smart_scheduler(request):
-    from core.scheduler import run_scheduled_notifications
-    sent = run_scheduled_notifications()
-    return Response({"status": "ok", "sent_notifications": sent})
-
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
 
