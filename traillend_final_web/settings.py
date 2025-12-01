@@ -101,11 +101,20 @@ SIMPLE_JWT = {
 
 CSRF_TRUSTED_ORIGINS = [
     "https://traillend-system-qqo7.onrender.com",
-    "https://*.onrender.com"
+    "https://*.onrender.com",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+
+# Fix login issues on Render Free
+CSRF_COOKIE_SECURE = False
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_HTTPONLY = False
+CSRF_USE_SESSIONS = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_REFERRER_POLICY = "no-referrer-when-downgrade"
+
 
 # Important
 CORS_ALLOW_HEADERS = [
