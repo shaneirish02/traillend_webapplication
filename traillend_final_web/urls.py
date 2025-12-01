@@ -4,7 +4,7 @@ from django.shortcuts import redirect
 from django.conf import settings
 from django.conf.urls.static import static
 
-from core.views import run_smart_scheduler, fix_images, api_login
+from core.views import run_smart_scheduler, api_login
 
 urlpatterns = [
     # Redirect ONLY the exact root URL "/"
@@ -21,9 +21,6 @@ urlpatterns = [
 
     # Scheduler endpoint
     path("api/run-scheduler/", run_smart_scheduler),
-
-    # Temporary image fixer
-    path("fix-images/", fix_images),
 ]
 
 if settings.DEBUG:
