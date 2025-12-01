@@ -51,6 +51,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 
+
 #stats
 from django.db.models import Count
 from django.db.models.functions import ExtractMonth
@@ -74,6 +75,8 @@ from core.data.hardcoded_damage import HARD_CODED_DAMAGE_LOSS
 
 from cloudinary.uploader import upload
 import os
+import re
+
 
 #FORGOT PASSWORD
 from django.core.mail import send_mail
@@ -365,38 +368,48 @@ def run_smart_scheduler(request):
     return Response({"status": "ok", "sent": sent})
 
 def fix_images(request):
-    folder_path = os.path.join(settings.BASE_DIR, "core", "static", "inventory", "items")
+    output = []
 
-    if not os.path.exists(folder_path):
-        return HttpResponse("❌ Inventory items folder not found.")
+    items = Item.objects.all()
 
-    results = []
-
-    for file in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, file)
-
-        if not os.path.isfile(file_path):
+    for item in items:
+        if not item.image:
+            output.append(f"⚠️ No image for: {item.name}")
             continue
 
-        # Match filename to item name
-        base = file.split(".")[0].replace("_", " ").replace("-", " ").title()
+        url = str(item.image)
 
+        # ------------------------------------------------
+        # 1. Normalize URL prefixes
+        # ------------------------------------------------
+        if url.startswith("https:/") and not url.startswith("https://"):
+            url = url.replace("https:/", "https://")
+
+        # Remove accidental domain prefix:
+        # https://yourapp.onrender.com/https://res.cloudinary...
+        url = re.sub(r"^https:\/\/[^\/]+\/https:\/\/", "https://", url)
+
+        # ------------------------------------------------
+        # 2. Double check the URL works
+        # ------------------------------------------------
         try:
-            item = Item.objects.get(name__icontains=base)
-        except Item.DoesNotExist:
-            results.append(f"⚠️ No DB item matches: {base}")
+            response = requests.head(url, timeout=5)
+            if response.status_code >= 400:
+                output.append(f"❌ Broken URL for {item.name}: {url}")
+                continue
+        except:
+            output.append(f"❌ Cannot reach URL for {item.name}: {url}")
             continue
 
-        # Upload to Cloudinary
-        upload_result = upload(file_path, folder="items")
-
-        # Update DB record
-        item.image = upload_result["secure_url"]
+        # ------------------------------------------------
+        # 3. Save fixed URL back to DB
+        # ------------------------------------------------
+        item.image = url
         item.save()
 
-        results.append(f"✅ Updated {item.name}: {upload_result['secure_url']}")
+        output.append(f"✅ Updated {item.name}: {url}")
 
-    return HttpResponse("<br>".join(results))
+    return HttpResponse("<br>".join(output))
 
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)
