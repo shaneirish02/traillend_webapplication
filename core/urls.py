@@ -4,7 +4,6 @@ from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.core.management import call_command
 from django.http import HttpResponse
-from core.views import run_smart_scheduler
 
 
 from .views import (
@@ -29,7 +28,7 @@ urlpatterns = [
 
     # 👉 Add the migration runner here
     path("run-migrations/", run_migrations),
-    path("api/run-scheduler/", run_smart_scheduler),
+
 
     # Admin web views
     path("dashboard/", views.dashboard, name="dashboard"),
