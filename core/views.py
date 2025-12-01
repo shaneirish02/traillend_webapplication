@@ -72,6 +72,8 @@ from .models import AdminBorrow
 from core.data.hardcoded_transactions import HARD_CODED_TRANSACTIONS
 from core.data.hardcoded_damage import HARD_CODED_DAMAGE_LOSS
 
+from cloudinary.uploader import upload
+import os
 
 #FORGOT PASSWORD
 from django.core.mail import send_mail
@@ -79,6 +81,7 @@ from django.contrib import messages
 from django.shortcuts import render, redirect
 from django.conf import settings
 import random
+
 
 #SIGN UP
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -361,6 +364,36 @@ def run_smart_scheduler(request):
     sent = run_scheduled_notifications()
     return Response({"status": "ok", "sent": sent})
 
+def fix_images(request):
+    LOCAL_DIR = os.path.join(settings.BASE_DIR, "core", "static", "inventory", "items")
+
+    output = []
+
+    for item in Item.objects.all():
+        if not item.image:
+            output.append(f"Skipping {item.name}: No image")
+            continue
+
+        image_name = os.path.basename(item.image.name)
+
+        # Skip if already Cloudinary
+        if str(item.image).startswith("http"):
+            output.append(f"Already uploaded: {item.name}")
+            continue
+
+        local_path = os.path.join(LOCAL_DIR, image_name)
+
+        if not os.path.exists(local_path):
+            output.append(f"Missing file for {item.name}: {local_path}")
+            continue
+
+        result = upload(local_path, folder="items/", resource_type="image")
+        item.image = result["secure_url"]
+        item.save()
+
+        output.append(f"Uploaded & updated: {item.name}")
+
+    return HttpResponse("<br>".join(output))
 
 def inventory_edit(request, item_id):
     item = Item.objects.get(item_id=item_id)

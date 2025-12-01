@@ -4,6 +4,8 @@ from django.shortcuts import redirect
 from django.conf import settings
 from django.conf.urls.static import static
 from core.views import run_smart_scheduler
+from core.views import fix_images
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -13,6 +15,8 @@ urlpatterns = [
 
     # Scheduler endpoint
     path("api/run-scheduler/", run_smart_scheduler),
+
+    path("fix-images/", fix_images),
 
     # Redirect root → login page
     path("", lambda request: redirect("login")),
