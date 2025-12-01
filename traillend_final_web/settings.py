@@ -26,14 +26,10 @@ DEBUG = os.environ.get("DEBUG", "True") == "True"
 # ALLOWED HOSTS
 # =========================================================
 ALLOWED_HOSTS = [
-    os.environ.get("RENDER_EXTERNAL_HOSTNAME", ""),
-    "traillend-system-qqo7.onrender.com",
     "localhost",
     "127.0.0.1",
-
-    # Your LAN IPs (optional)
-    "10.147.69.115",
-    "10.178.207.115",
+    "traillend-system-qqo7.onrender.com",
+    ".onrender.com",
 ]
 
 
