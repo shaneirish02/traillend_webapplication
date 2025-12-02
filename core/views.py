@@ -1327,69 +1327,6 @@ def pending_requests_api(request):
 
 @csrf_exempt
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])   # ← remove SessionAuthentication
-@permission_classes([IsAuthenticated])
-@transaction.atomic
-def reservation_update_api(request, pk: int):
-
-    r = get_object_or_404(
-        Reservation.objects
-        .select_related('userborrower')
-        .prefetch_related('items__item'),
-        pk=pk
-    )
-
-    # -------------------------------
-    # FIXED: borrower structured object
-    # -------------------------------
-    borrower_data = {
-        "full_name": r.userborrower.full_name if r.userborrower else "Unknown",
-        "contact_number": (
-            r.userborrower.contact_number 
-            if r.userborrower and hasattr(r.userborrower, "contact_number")
-            else ""
-        )
-    }
-
-    # -------------------------------
-    # FIXED: items list (correct item name)
-    # -------------------------------
-    items = []
-    for it in r.items.all():
-        items.append({
-            "item_name": it.item.name if it.item else it.item_name,
-            "quantity": it.quantity,
-            "image": request.build_absolute_uri(it.item.image.url)
-                     if it.item and it.item.image else ""
-        })
-
-    data = {
-        "id": r.id,
-        "transaction_id": r.transaction_id,
-
-        # FIXED: send borrower as object
-        "userborrower": borrower_data,
-        "contact_number": borrower_data["contact_number"],
-
-        "date_borrowed": r.date_borrowed.strftime('%Y-%m-%d'),
-        "date_return": r.date_return.strftime('%Y-%m-%d'),
-        "priority_display": r.priority,   # JS expects "priority_display"
-        "message": r.message or "No message provided",
-        "status": r.status,
-
-        "letter_image": request.build_absolute_uri(r.letter_image.url) 
-                        if r.letter_image else "",
-        "valid_id_image": request.build_absolute_uri(r.valid_id_image.url) 
-                        if r.valid_id_image else "",
-
-        "items": items
-    }
-
-    return Response(data)
-
-
-@csrf_exempt
-@api_view(['POST'])
 @authentication_classes([SessionAuthentication, JWTAuthentication])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
