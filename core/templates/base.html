@@ -504,7 +504,7 @@
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRFToken': csrftoken
+          'X-CSRFToken': csrftoken,
           "Authorization": `Bearer ${localStorage.getItem("access")}`
         },
         body: JSON.stringify(payload)
