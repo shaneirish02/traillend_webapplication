@@ -144,7 +144,11 @@ def dashboard(request):
     # Summary cards
     total_users = UserBorrower.objects.count()
     total_items = Item.objects.count()
-    total_transactions = Reservation.objects.count()
+    real_tx = Reservation.objects.count()
+    admin_tx = AdminBorrow.objects.count()
+    hardcoded_tx = len(HARD_CODED_TRANSACTIONS)
+    total_transactions = real_tx + admin_tx + hardcoded_tx
+    
     total_borrowed = Reservation.objects.filter(status__iexact='in use').count()
 
     # PIE - Item Category Distribution
