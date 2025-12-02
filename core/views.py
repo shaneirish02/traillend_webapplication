@@ -1386,12 +1386,12 @@ def reservation_detail_api(request, pk: int):
     return Response(data)
 
 
+@csrf_exempt
 @api_view(['POST'])
 @authentication_classes([SessionAuthentication, JWTAuthentication])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def reservation_update_api(request, pk: int):
-
     r = get_object_or_404(
         Reservation.objects.prefetch_related('items__item').select_related('userborrower'),
         pk=pk
