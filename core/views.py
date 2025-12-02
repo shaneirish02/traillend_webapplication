@@ -1325,10 +1325,12 @@ def pending_requests_api(request):
     return Response({'html': html})
 
 
-@api_view(['GET'])
-@authentication_classes([SessionAuthentication, JWTAuthentication])
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])   # ← remove SessionAuthentication
 @permission_classes([IsAuthenticated])
-def reservation_detail_api(request, pk: int):
+@transaction.atomic
+def reservation_update_api(request, pk: int):
 
     r = get_object_or_404(
         Reservation.objects
