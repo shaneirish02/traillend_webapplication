@@ -7,22 +7,20 @@ from django.conf.urls.static import static
 from core.views import run_smart_scheduler, api_login
 
 urlpatterns = [
-    # Redirect ONLY the exact root URL "/"
-    path("", lambda request: redirect("/login/")),
-
     # Admin
     path("admin/", admin.site.urls),
 
-    # Main app URLs
-    path("", include("core.urls")),
-
-    # Direct login API
+    # API routes
     path("api/login/", api_login),
-
-    # Scheduler endpoint
     path("api/run-scheduler/", run_smart_scheduler),
+
+    # Main app URLs
+    path("", include("core.urls")),     # <-- Must be BEFORE redirect root
+
+    # Redirect ONLY root /
+    path("", lambda request: redirect("/login/")),
 ]
 
+# Serve media files
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL,
-                          document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
